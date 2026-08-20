@@ -9,6 +9,8 @@ import FactoryOrderPage from "../components/Dashboard/FactoryOrderPage";
 import FactoryReturnPage from "../components/Dashboard/FactoryReturnPage";
 import FundPage from "../components/Dashboard/FundPage";
 import CompanyLedgerPage from "../components/Dashboard/Companyledgerpage";
+import CustomerPage from "../components/Dashboard/Customerpage";
+import SalePage from "../components/Dashboard/Salepage";
 
 const RoutesAll = () => {
   return (
@@ -43,6 +45,8 @@ const RoutesAll = () => {
         <Route path="factory-return" element={<FactoryReturnPage />} />
         <Route path="company-ledger" element={<CompanyLedgerPage />} />
         <Route path="fund" element={<FundPage />} />
+        <Route path="customers" element={<CustomerPage />} />
+         <Route path="sales" element={<SalePage />} />
       </Route>
     </Routes>
   );
