@@ -5,6 +5,10 @@ import DHome from "../components/Dashboard/DHome";
 import ProductMaster from "../components/Dashboard/ProductMaster";
 import PublicRoute from "../components/Dashboard/PublicRoute";
 import PrivateRoute from "../components/Dashboard/PrivateRoute";
+import FactoryOrderPage from "../components/Dashboard/FactoryOrderPage";
+import FactoryReturnPage from "../components/Dashboard/FactoryReturnPage";
+import FundPage from "../components/Dashboard/FundPage";
+import CompanyLedgerPage from "../components/Dashboard/Companyledgerpage";
 
 const RoutesAll = () => {
   return (
@@ -35,7 +39,10 @@ const RoutesAll = () => {
         }
       >
         <Route path="product" element={<ProductMaster />} />
-       
+        <Route path="factory-order" element={<FactoryOrderPage />} />
+        <Route path="factory-return" element={<FactoryReturnPage />} />
+        <Route path="company-ledger" element={<CompanyLedgerPage />} />
+        <Route path="fund" element={<FundPage />} />
       </Route>
     </Routes>
   );

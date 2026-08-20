@@ -45,15 +45,19 @@ async function run() {
     console.log("✅ MongoDB connected successfully");
 
     const db = client.db(dbName);
+
+    /* =========================================================
+       সব Collection — এক জায়গায় গুছিয়ে ঘোষণা (এখানেই একবার)
+    ========================================================= */
     const AllUser = db.collection("AllUser");
     const Products = db.collection("Products");
     const Categories = db.collection("Categories");
-
-    /* ================= Helper: auto product code ================= */
-    async function generateProductCode() {
-      const count = await Products.countDocuments();
-      return `PRD-${String(count + 1).padStart(4, "0")}`;
-    }
+    const Stock = db.collection("Stock");
+    const Funds = db.collection("Funds");
+    const FundTransactions = db.collection("FundTransactions");
+    const FactoryOrders = db.collection("FactoryOrders");
+    const FactoryReturns = db.collection("FactoryReturns"); // আগে এটা মিসিং ছিল, এটাই 500 error এর মূল কারণ
+    const Companies = db.collection("Companies");
 
     /* ================= REGISTER ================= */
     app.post("/register", async (req, res) => {
@@ -81,7 +85,6 @@ async function run() {
 
         const token = generateToken(result.insertedId);
 
-        // token cookie তে set হচ্ছে, JSON body তে আর যাচ্ছে না
         res.cookie("token", token, cookieOptions);
 
         res.status(201).send({
@@ -113,7 +116,6 @@ async function run() {
           return res.status(401).send({ message: "ভুল Email অথবা Password" });
         }
 
-        // এখানে নতুন check
         if (!user.isActive) {
           return res.status(403).send({ message: "আপনার account বর্তমানে inactive, Admin এর সাথে যোগাযোগ করুন" });
         }
@@ -157,9 +159,8 @@ async function run() {
           return res.status(401).send({ message: "User not found" });
         }
 
-        // এখানে নতুন check
         if (!user.isActive) {
-          res.clearCookie("token", cookieOptions); // cookie clear করে দাও যাতে বারবার request না যায়
+          res.clearCookie("token", cookieOptions);
           return res.status(403).send({ message: "আপনার account inactive করা হয়েছে" });
         }
 
@@ -179,7 +180,11 @@ async function run() {
        PRODUCTS (Feed Master)
     ========================================================= */
 
-    /* ================= GET all products (search + filter — সব backend থেকে) ================= */
+    async function generateProductCode() {
+      const count = await Products.countDocuments();
+      return `PRD-${String(count + 1).padStart(4, "0")}`;
+    }
+
     app.get("/products", protect, async (req, res) => {
       try {
         const { search = "", category = "", status = "" } = req.query;
@@ -202,7 +207,6 @@ async function run() {
       }
     });
 
-    /* ================= GET single product ================= */
     app.get("/products/:id", protect, async (req, res) => {
       try {
         const product = await Products.findOne({ _id: new ObjectId(req.params.id) });
@@ -213,70 +217,71 @@ async function run() {
       }
     });
 
-    /* ================= CREATE product ================= */
     app.post("/products", protect, async (req, res) => {
-  try {
-    const { name, category, brand, unit, bagWeightKg, salePricePerKg, status } = req.body;
+      try {
+        const { name, category, brand, salePricePerKg, status } = req.body;
 
-    if (!name || !category || !unit) {
-      return res.status(400).send({ message: "Name, Category, Unit আবশ্যক" });
-    }
+        if (!name || !category) {
+          return res.status(400).send({ message: "Name, Category আবশ্যক" });
+        }
 
-    const existing = await Products.findOne({ name: name.trim(), category });
-    if (existing) {
-      return res.status(400).send({ message: "এই নামে এই Category-তে item আগে থেকেই আছে" });
-    }
+        const existing = await Products.findOne({ name: name.trim(), category });
+        if (existing) {
+          return res.status(400).send({ message: "এই নামে এই Category-তে item আগে থেকেই আছে" });
+        }
 
-    const code = await generateProductCode();
+        const code = await generateProductCode();
 
-    const newProduct = {
-      name: name.trim(),
-      category,
-      brand: brand?.trim() || "",
-      unit,
-      bagWeightKg: Number(bagWeightKg) || 0,
-      salePricePerKg: Number(salePricePerKg) || 0,
-      code,
-      status: status || "active",
-      createdBy: req.user._id,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+        const newProduct = {
+          name: name.trim(),
+          category,
+          brand: brand?.trim() || "",
+          purchasePricePerKg: 0,
+          totalPurchasedKg: 0,
+          totalPurchasedAmount: 0,
+          salePricePerKg: Number(salePricePerKg) || 0,
+          code,
+          status: status || "active",
+          createdBy: req.user._id,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
 
-    const result = await Products.insertOne(newProduct);
-    res.status(201).send({ ...newProduct, _id: result.insertedId });
-  } catch (err) {
-    res.status(500).send({ message: "Server error", error: err.message });
-  }
-});
-
-    /* ================= UPDATE product ================= */
-   app.patch("/products/:id", protect, async (req, res) => {
-  try {
-    const _id = new ObjectId(req.params.id);
-    const updates = { ...req.body, updatedAt: new Date() };
-
-    delete updates._id;
-    delete updates.code;
-    delete updates.createdAt;
-    delete updates.createdBy;
-
-    ["bagWeightKg", "salePricePerKg"].forEach((f) => {
-      if (updates[f] !== undefined) updates[f] = Number(updates[f]) || 0;
+        const result = await Products.insertOne(newProduct);
+        res.status(201).send({ ...newProduct, _id: result.insertedId });
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
     });
 
-    const existing = await Products.findOne({ _id });
-    if (!existing) return res.status(404).send({ message: "Product পাওয়া যায়নি" });
+    app.patch("/products/:id", protect, async (req, res) => {
+      try {
+        const _id = new ObjectId(req.params.id);
+        const updates = { ...req.body, updatedAt: new Date() };
 
-    await Products.updateOne({ _id }, { $set: updates });
-    const updated = await Products.findOne({ _id });
-    res.status(200).send(updated);
-  } catch (err) {
-    res.status(500).send({ message: "Server error", error: err.message });
-  }
-});
+        delete updates._id;
+        delete updates.code;
+        delete updates.createdAt;
+        delete updates.createdBy;
+        delete updates.purchasePricePerKg;
+        delete updates.totalPurchasedKg;
+        delete updates.totalPurchasedAmount;
 
-    /* ================= DELETE product ================= */
+        if (updates.salePricePerKg !== undefined) {
+          updates.salePricePerKg = Number(updates.salePricePerKg) || 0;
+        }
+
+        const existing = await Products.findOne({ _id });
+        if (!existing) return res.status(404).send({ message: "Product পাওয়া যায়নি" });
+
+        await Products.updateOne({ _id }, { $set: updates });
+        const updated = await Products.findOne({ _id });
+        res.status(200).send(updated);
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
     app.delete("/products/:id", protect, async (req, res) => {
       try {
         const result = await Products.deleteOne({ _id: new ObjectId(req.params.id) });
@@ -289,12 +294,10 @@ async function run() {
       }
     });
 
-    /* ================= Helper: escape regex ================= */
     function escapeRegExp(str) {
       return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
 
-    /* ================= GET all categories ================= */
     app.get("/categories", protect, async (req, res) => {
       try {
         const categories = await Categories.find({}).sort({ name: 1 }).toArray();
@@ -304,7 +307,6 @@ async function run() {
       }
     });
 
-    /* ================= CREATE category ================= */
     app.post("/categories", protect, async (req, res) => {
       try {
         const { name } = req.body;
@@ -333,7 +335,6 @@ async function run() {
       }
     });
 
-    /* ================= DELETE category ================= */
     app.delete("/categories/:id", protect, async (req, res) => {
       try {
         const _id = new ObjectId(req.params.id);
@@ -351,6 +352,619 @@ async function run() {
         res.status(500).send({ message: "Server error", error: err.message });
       }
     });
+
+    /* =========================================================
+       FUNDS — ensure default funds + CRUD + deposit + transactions
+    ========================================================= */
+
+    async function ensureDefaultFunds() {
+      const defaults = [
+        { name: "Cash in Hand", type: "default", deletable: false },
+        { name: "Bank", type: "default", deletable: true },
+        { name: "Profit Fund", type: "profit", deletable: false },
+      ];
+      for (const f of defaults) {
+        const exists = await Funds.findOne({ name: f.name });
+        if (!exists) {
+          await Funds.insertOne({
+            ...f,
+            balance: 0,
+            totalIn: 0,
+            totalOut: 0,
+            createdAt: new Date(),
+          });
+        }
+      }
+    }
+    await ensureDefaultFunds();
+
+    app.get("/funds", protect, async (req, res) => {
+      try {
+        const funds = await Funds.find({}).sort({ createdAt: 1 }).toArray();
+        res.status(200).send(funds);
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    app.post("/funds", protect, async (req, res) => {
+      try {
+        const { name } = req.body;
+        if (!name || !name.trim()) {
+          return res.status(400).send({ message: "Fund নাম দাও" });
+        }
+
+        const trimmed = name.trim();
+        const existing = await Funds.findOne({ name: { $regex: `^${trimmed}$`, $options: "i" } });
+        if (existing) {
+          return res.status(400).send({ message: "এই নামে Fund আগে থেকেই আছে" });
+        }
+
+        const newFund = {
+          name: trimmed,
+          type: "custom",
+          deletable: true,
+          balance: 0,
+          totalIn: 0,
+          totalOut: 0,
+          createdBy: req.user._id,
+          createdAt: new Date(),
+        };
+
+        const result = await Funds.insertOne(newFund);
+        res.status(201).send({ ...newFund, _id: result.insertedId });
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    app.post("/funds/:id/deposit", protect, async (req, res) => {
+      try {
+        const _id = new ObjectId(req.params.id);
+        const { amount, note, date } = req.body;
+
+        const amountNum = Number(amount);
+        if (!amountNum || amountNum <= 0) {
+          return res.status(400).send({ message: "সঠিক Amount দাও" });
+        }
+
+        const fund = await Funds.findOne({ _id });
+        if (!fund) return res.status(404).send({ message: "Fund পাওয়া যায়নি" });
+
+        if (fund.type === "profit") {
+          return res.status(400).send({ message: "Profit Fund এ সরাসরি Deposit করা যায় না, এটা auto আপডেট হয়" });
+        }
+
+        await Funds.updateOne(
+          { _id },
+          {
+            $inc: { balance: amountNum, totalIn: amountNum },
+            $set: { updatedAt: new Date() },
+          }
+        );
+
+        await FundTransactions.insertOne({
+          fundId: _id,
+          fundName: fund.name,
+          type: "deposit",
+          direction: "in",
+          amount: amountNum,
+          note: note?.trim() || "Manual Deposit",
+          date: date || new Date().toISOString().slice(0, 10),
+          createdBy: req.user._id,
+          createdAt: new Date(),
+        });
+
+        const updated = await Funds.findOne({ _id });
+        res.status(200).send(updated);
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    app.delete("/funds/:id", protect, async (req, res) => {
+      try {
+        const _id = new ObjectId(req.params.id);
+        const fund = await Funds.findOne({ _id });
+        if (!fund) return res.status(404).send({ message: "Fund পাওয়া যায়নি" });
+
+        if (!fund.deletable) {
+          return res.status(400).send({ message: "এই Fund Delete করা যাবে না" });
+        }
+        if (fund.balance !== 0) {
+          return res.status(400).send({ message: "Fund এ এখনো টাকা আছে, আগে balance 0 করো" });
+        }
+
+        await Funds.deleteOne({ _id });
+        res.status(200).send({ message: "Fund Delete হয়েছে" });
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    app.get("/fund-transactions", protect, async (req, res) => {
+      try {
+        const { fundId } = req.query;
+        const query = {};
+        if (fundId) query.fundId = new ObjectId(fundId);
+
+        const transactions = await FundTransactions.find(query).sort({ createdAt: -1 }).toArray();
+        res.status(200).send(transactions);
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    /* =========================================================
+       COMPANY helper (Factory Advance tracking)
+    ========================================================= */
+
+    async function getOrCreateCompany(name) {
+      const trimmed = name.trim();
+      let company = await Companies.findOne({ name: { $regex: `^${escapeRegExp(trimmed)}$`, $options: "i" } });
+      if (!company) {
+        const result = await Companies.insertOne({
+          name: trimmed,
+          advanceBalance: 0,
+          totalAdvanceGiven: 0,
+          totalBillPaid: 0,
+          createdAt: new Date(),
+        });
+        company = await Companies.findOne({ _id: result.insertedId });
+      }
+      return company;
+    }
+
+    /* =========================================================
+       FACTORY ORDER (পরিকল্পনা — বসতা সংখ্যা + kg/বসতা + optional Advance)
+    ========================================================= */
+
+    app.get("/factory-orders", protect, async (req, res) => {
+      try {
+        const orders = await FactoryOrders.find({}).sort({ date: -1, createdAt: -1 }).toArray();
+        res.status(200).send(orders);
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    app.post("/factory-orders", protect, async (req, res) => {
+      try {
+        const { company, date, bagCount, weightPerBag, advanceAmount, fundId } = req.body;
+
+        if (!company || !date || !bagCount || !weightPerBag) {
+          return res.status(400).send({ message: "সব ফিল্ড পূরণ করো" });
+        }
+
+        const bagCountNum = Number(bagCount);
+        const weightPerBagNum = Number(weightPerBag);
+        if (bagCountNum <= 0 || weightPerBagNum <= 0) {
+          return res.status(400).send({ message: "সংখ্যা ০ এর বেশি হতে হবে" });
+        }
+
+        const expectedTotalKg = bagCountNum * weightPerBagNum;
+        const advanceNum = Number(advanceAmount) || 0;
+
+        let fund = null;
+        if (advanceNum > 0) {
+          if (!fundId) return res.status(400).send({ message: "Advance দিলে Fund Source বেছে নাও" });
+          fund = await Funds.findOne({ _id: new ObjectId(fundId) });
+          if (!fund) return res.status(404).send({ message: "Fund পাওয়া যায়নি" });
+          if (fund.balance < advanceNum) {
+            return res.status(400).send({
+              message: `${fund.name} এ যথেষ্ট টাকা নেই। বর্তমান Balance: ৳${fund.balance.toLocaleString()}`,
+            });
+          }
+        }
+
+        const companyDoc = await getOrCreateCompany(company);
+
+        const newOrder = {
+          company: companyDoc.name,
+          companyId: companyDoc._id,
+          date,
+          bagCount: bagCountNum,
+          weightPerBag: weightPerBagNum,
+          expectedTotalKg,
+          returnedBags: 0,
+          status: "pending", // pending | partial | completed
+          advanceAmount: advanceNum,
+          advanceFundId: fund ? fund._id : null,
+          advanceFundName: fund ? fund.name : null,
+          createdBy: req.user._id,
+          createdAt: new Date(),
+        };
+
+        const result = await FactoryOrders.insertOne(newOrder);
+
+        if (advanceNum > 0 && fund) {
+          await Funds.updateOne(
+            { _id: fund._id },
+            { $inc: { balance: -advanceNum, totalOut: advanceNum }, $set: { updatedAt: new Date() } }
+          );
+
+          await Companies.updateOne(
+            { _id: companyDoc._id },
+            { $inc: { advanceBalance: advanceNum, totalAdvanceGiven: advanceNum }, $set: { updatedAt: new Date() } }
+          );
+
+          await FundTransactions.insertOne({
+            fundId: fund._id,
+            fundName: fund.name,
+            type: "factory_advance",
+            direction: "out",
+            amount: advanceNum,
+            note: `Advance — ${companyDoc.name}`,
+            date,
+            createdBy: req.user._id,
+            createdAt: new Date(),
+          });
+        }
+
+        const saved = await FactoryOrders.findOne({ _id: result.insertedId });
+        res.status(201).send(saved);
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    app.delete("/factory-orders/:id", protect, async (req, res) => {
+      try {
+        const _id = new ObjectId(req.params.id);
+        const order = await FactoryOrders.findOne({ _id });
+        if (!order) return res.status(404).send({ message: "Order পাওয়া যায়নি" });
+
+        if (order.returnedBags > 0) {
+          return res.status(400).send({ message: "এই Order-এ ইতিমধ্যে Return এসেছে, Delete করা যাবে না" });
+        }
+
+        if (order.advanceAmount > 0) {
+          await Funds.updateOne(
+            { _id: order.advanceFundId },
+            { $inc: { balance: order.advanceAmount, totalOut: -order.advanceAmount }, $set: { updatedAt: new Date() } }
+          );
+          await Companies.updateOne(
+            { _id: order.companyId },
+            {
+              $inc: { advanceBalance: -order.advanceAmount, totalAdvanceGiven: -order.advanceAmount },
+              $set: { updatedAt: new Date() },
+            }
+          );
+          await FundTransactions.insertOne({
+            fundId: order.advanceFundId,
+            fundName: order.advanceFundName,
+            type: "factory_advance_reversed",
+            direction: "in",
+            amount: order.advanceAmount,
+            note: `Order বাতিল (Advance ফেরত) — ${order.company}`,
+            date: new Date().toISOString().slice(0, 10),
+            createdBy: req.user._id,
+            createdAt: new Date(),
+          });
+        }
+
+        await FactoryOrders.deleteOne({ _id });
+        res.status(200).send({ message: "Order delete হয়েছে" });
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    /* =========================================================
+       FACTORY RETURN (আসল বিল + Advance auto adjust)
+    ========================================================= */
+
+    app.get("/factory-returns", protect, async (req, res) => {
+      try {
+        const { orderId } = req.query;
+        const query = {};
+        if (orderId) query.orderId = new ObjectId(orderId);
+        const returns = await FactoryReturns.find(query).sort({ createdAt: -1 }).toArray();
+        res.status(200).send(returns);
+      } catch (err) {
+        console.error("factory-returns GET error:", err);
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    app.post("/factory-returns", protect, async (req, res) => {
+      try {
+        const { orderId, date, fundId, items } = req.body;
+
+        if (!orderId || !date) {
+          return res.status(400).send({ message: "Order ও Date আবশ্যক" });
+        }
+        if (!Array.isArray(items) || items.length === 0) {
+          return res.status(400).send({ message: "অন্তত একটা Product line যোগ করো" });
+        }
+
+        const order = await FactoryOrders.findOne({ _id: new ObjectId(orderId) });
+        if (!order) return res.status(404).send({ message: "Order পাওয়া যায়নি" });
+
+        const pendingBags = order.bagCount - order.returnedBags;
+
+        const normalizedItems = [];
+        let totalBillAmount = 0;
+        let totalKgAll = 0;
+        let totalBagsUsed = 0;
+
+        for (const item of items) {
+          const { productId, bagCount, totalKg, amount } = item;
+
+          if (!productId || !bagCount || !totalKg || !amount) {
+            return res.status(400).send({ message: "প্রতিটা Product line এ সব ফিল্ড পূরণ করো" });
+          }
+
+          const bagCountNum = Number(bagCount);
+          const totalKgNum = Number(totalKg);
+          const amountNum = Number(amount);
+
+          if (bagCountNum <= 0 || totalKgNum <= 0 || amountNum <= 0) {
+            return res.status(400).send({ message: "সংখ্যা গুলো সঠিক দাও" });
+          }
+
+          const product = await Products.findOne({ _id: new ObjectId(productId) });
+          if (!product) return res.status(404).send({ message: "Product পাওয়া যায়নি" });
+
+          const costPerKg = amountNum / totalKgNum;
+
+          normalizedItems.push({
+            productId: product._id,
+            productName: product.name,
+            bagCount: bagCountNum,
+            totalKg: totalKgNum,
+            amount: amountNum,
+            costPerKg,
+          });
+
+          totalBillAmount += amountNum;
+          totalKgAll += totalKgNum;
+          totalBagsUsed += bagCountNum;
+        }
+
+        if (totalBagsUsed > pendingBags) {
+          return res.status(400).send({
+            message: `এই Order-এ মাত্র ${pendingBags}টা বসতা বাকি আছে, তুমি ${totalBagsUsed}টার হিসাব দিয়েছো`,
+          });
+        }
+
+        const companyDoc = await Companies.findOne({ _id: order.companyId });
+        const availableAdvance = companyDoc?.advanceBalance || 0;
+        const advanceUsed = Math.min(availableAdvance, totalBillAmount);
+        const remainingToPay = totalBillAmount - advanceUsed;
+
+        let fund = null;
+        if (remainingToPay > 0) {
+          if (!fundId) return res.status(400).send({ message: "বাকি টাকার জন্য Fund Source বেছে নাও" });
+          fund = await Funds.findOne({ _id: new ObjectId(fundId) });
+          if (!fund) return res.status(404).send({ message: "Fund পাওয়া যায়নি" });
+          if (fund.balance < remainingToPay) {
+            return res.status(400).send({
+              message: `${fund.name} এ যথেষ্ট টাকা নেই। বর্তমান Balance: ৳${fund.balance.toLocaleString()}`,
+            });
+          }
+        }
+
+        const newReturn = {
+          orderId: order._id,
+          company: order.company,
+          companyId: order.companyId,
+          date,
+          items: normalizedItems,
+          totalBillAmount,
+          advanceUsed,
+          remainingPaid: remainingToPay,
+          totalKg: totalKgAll,
+          totalBagsUsed,
+          fundId: fund ? fund._id : null,
+          fundName: fund ? fund.name : null,
+          createdBy: req.user._id,
+          createdAt: new Date(),
+        };
+        const returnResult = await FactoryReturns.insertOne(newReturn);
+
+        for (const item of normalizedItems) {
+          const product = await Products.findOne({ _id: item.productId });
+          const prevKg = product.totalPurchasedKg || 0;
+          const prevAmount = product.totalPurchasedAmount || 0;
+
+          const newTotalKg = prevKg + item.totalKg;
+          const newTotalAmount = prevAmount + item.amount;
+          const newAvgCost = newTotalAmount / newTotalKg;
+
+          await Products.updateOne(
+            { _id: item.productId },
+            {
+              $set: {
+                purchasePricePerKg: newAvgCost,
+                totalPurchasedKg: newTotalKg,
+                totalPurchasedAmount: newTotalAmount,
+                updatedAt: new Date(),
+              },
+            }
+          );
+
+          await Stock.updateOne(
+            { productId: item.productId },
+            {
+              $inc: { currentKg: item.totalKg },
+              $set: { productName: item.productName, updatedAt: new Date() },
+              $setOnInsert: { createdAt: new Date() },
+            },
+            { upsert: true }
+          );
+        }
+
+        const newReturnedBags = order.returnedBags + totalBagsUsed;
+        const newStatus =
+          newReturnedBags >= order.bagCount ? "completed" : newReturnedBags > 0 ? "partial" : "pending";
+        await FactoryOrders.updateOne(
+          { _id: order._id },
+          { $set: { returnedBags: newReturnedBags, status: newStatus, updatedAt: new Date() } }
+        );
+
+        if (advanceUsed > 0) {
+          await Companies.updateOne(
+            { _id: order.companyId },
+            { $inc: { advanceBalance: -advanceUsed, totalBillPaid: advanceUsed }, $set: { updatedAt: new Date() } }
+          );
+        }
+
+        if (remainingToPay > 0 && fund) {
+          await Funds.updateOne(
+            { _id: fund._id },
+            { $inc: { balance: -remainingToPay, totalOut: remainingToPay }, $set: { updatedAt: new Date() } }
+          );
+          await Companies.updateOne(
+            { _id: order.companyId },
+            { $inc: { totalBillPaid: remainingToPay }, $set: { updatedAt: new Date() } }
+          );
+          await FundTransactions.insertOne({
+            fundId: fund._id,
+            fundName: fund.name,
+            type: "factory_return_payment",
+            direction: "out",
+            amount: remainingToPay,
+            note: `Feed Payment (Advance বাদে) — ${order.company}`,
+            date,
+            createdBy: req.user._id,
+            createdAt: new Date(),
+          });
+        }
+
+        const savedReturn = await FactoryReturns.findOne({ _id: returnResult.insertedId });
+        res.status(201).send(savedReturn);
+      } catch (err) {
+        console.error("factory-returns POST error:", err);
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    /* ================= DELETE factory return (সব উল্টে দেওয়া) ================= */
+    app.delete("/factory-returns/:id", protect, async (req, res) => {
+      try {
+        const _id = new ObjectId(req.params.id);
+        const ret = await FactoryReturns.findOne({ _id });
+        if (!ret) return res.status(404).send({ message: "Return পাওয়া যায়নি" });
+
+        for (const item of ret.items) {
+          await Stock.updateOne(
+            { productId: item.productId },
+            { $inc: { currentKg: -item.totalKg }, $set: { updatedAt: new Date() } }
+          );
+
+          const product = await Products.findOne({ _id: item.productId });
+          if (product) {
+            const newTotalKg = Math.max(0, (product.totalPurchasedKg || 0) - item.totalKg);
+            const newTotalAmount = Math.max(0, (product.totalPurchasedAmount || 0) - item.amount);
+            const newAvgCost = newTotalKg > 0 ? newTotalAmount / newTotalKg : 0;
+
+            await Products.updateOne(
+              { _id: item.productId },
+              {
+                $set: {
+                  purchasePricePerKg: newAvgCost,
+                  totalPurchasedKg: newTotalKg,
+                  totalPurchasedAmount: newTotalAmount,
+                  updatedAt: new Date(),
+                },
+              }
+            );
+          }
+        }
+
+        const order = await FactoryOrders.findOne({ _id: ret.orderId });
+        if (order) {
+          const newReturnedBags = Math.max(0, order.returnedBags - ret.totalBagsUsed);
+          const newStatus =
+            newReturnedBags >= order.bagCount ? "completed" : newReturnedBags > 0 ? "partial" : "pending";
+          await FactoryOrders.updateOne(
+            { _id: order._id },
+            { $set: { returnedBags: newReturnedBags, status: newStatus, updatedAt: new Date() } }
+          );
+        }
+
+        // Advance ব্যবহার হয়ে থাকলে company balance ফেরত দাও
+        if (ret.advanceUsed > 0) {
+          await Companies.updateOne(
+            { _id: ret.companyId },
+            { $inc: { advanceBalance: ret.advanceUsed, totalBillPaid: -ret.advanceUsed }, $set: { updatedAt: new Date() } }
+          );
+        }
+
+        // Fund থেকে যেই remaining টাকা কাটা হয়েছিল সেটা ফেরত দাও
+        if (ret.remainingPaid > 0 && ret.fundId) {
+          await Funds.updateOne(
+            { _id: ret.fundId },
+            { $inc: { balance: ret.remainingPaid, totalOut: -ret.remainingPaid }, $set: { updatedAt: new Date() } }
+          );
+          await Companies.updateOne(
+            { _id: ret.companyId },
+            { $inc: { totalBillPaid: -ret.remainingPaid }, $set: { updatedAt: new Date() } }
+          );
+          await FundTransactions.insertOne({
+            fundId: ret.fundId,
+            fundName: ret.fundName,
+            type: "factory_return_reversed",
+            direction: "in",
+            amount: ret.remainingPaid,
+            note: `Return বাতিল — ${ret.company}`,
+            date: new Date().toISOString().slice(0, 10),
+            createdBy: req.user._id,
+            createdAt: new Date(),
+          });
+        }
+
+        await FactoryReturns.deleteOne({ _id });
+        res.status(200).send({ message: "Return delete হয়েছে ও সব হিসাব ফেরত নেওয়া হয়েছে" });
+      } catch (err) {
+        console.error("factory-returns DELETE error:", err);
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    /* =========================================================
+       COMPANY LEDGER (Factory Advance tracking)
+    ========================================================= */
+
+    app.get("/companies", protect, async (req, res) => {
+      try {
+        const companies = await Companies.find({}).sort({ name: 1 }).toArray();
+        res.status(200).send(companies);
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+    app.get("/companies/:id/history", protect, async (req, res) => {
+      try {
+        const companyId = new ObjectId(req.params.id);
+        const orders = await FactoryOrders.find({ companyId }).sort({ date: -1 }).toArray();
+        const returns = await FactoryReturns.find({ companyId }).sort({ date: -1 }).toArray();
+        res.status(200).send({ orders, returns });
+      } catch (err) {
+        res.status(500).send({ message: "Server error", error: err.message });
+      }
+    });
+
+
+    /* =========================================================
+   STOCK (view only — Factory Return থেকে বাড়ে, Sale থেকে কমবে)
+========================================================= */
+
+app.get("/stock", protect, async (req, res) => {
+  try {
+    const stock = await Stock.find({}).toArray();
+    // Mongo _id ObjectId কে string করে পাঠাচ্ছি যাতে frontend এ productId মিলাতে সুবিধা হয়
+    const formatted = stock.map((s) => ({
+      ...s,
+      productId: s.productId.toString(),
+    }));
+    res.status(200).send(formatted);
+  } catch (err) {
+    res.status(500).send({ message: "Server error", error: err.message });
+  }
+});
 
     /* ================= Root route ================= */
     app.get("/", (req, res) => {

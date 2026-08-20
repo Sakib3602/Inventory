@@ -6,8 +6,7 @@ interface Product {
   name: string;
   category: string;
   brand: string;
-  unit: "kg" | "bosta";
-  bagWeightKg: number;
+  purchasePricePerKg: number;
   salePricePerKg: number;
   code: string;
   status: "active" | "inactive";
@@ -25,8 +24,6 @@ const emptyForm = {
   name: "",
   category: "",
   brand: "",
-  unit: "bosta" as "kg" | "bosta",
-  bagWeightKg: "",
   salePricePerKg: "",
   status: "active" as "active" | "inactive",
 };
@@ -36,7 +33,6 @@ const ProductMaster = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // সব search/filter backend থেকে হয়
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -46,7 +42,6 @@ const ProductMaster = () => {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
 
-  // নতুন category যোগ করার inline UI
   const [addingCategory, setAddingCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [savingCategory, setSavingCategory] = useState(false);
@@ -89,7 +84,6 @@ const ProductMaster = () => {
     fetchCategories();
   }, [fetchCategories]);
 
-  // debounce — টাইপ করা শেষ হলে ৩০০ms পর backend এ কল যাবে
   useEffect(() => {
     const t = setTimeout(fetchProducts, 300);
     return () => clearTimeout(t);
@@ -109,8 +103,6 @@ const ProductMaster = () => {
       name: p.name,
       category: p.category,
       brand: p.brand,
-      unit: p.unit,
-      bagWeightKg: String(p.bagWeightKg || ""),
       salePricePerKg: String(p.salePricePerKg || ""),
       status: p.status,
     });
@@ -191,13 +183,13 @@ const ProductMaster = () => {
   const activeCount = products.filter((p) => p.status === "active").length;
 
   return (
-    <div className="poppins-regular">
+    <div>
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
           <h1 className="text-xl font-semibold text-[#1f2b22]">Product / Feed Master</h1>
           <p className="text-sm text-gray-400 mt-0.5">
-            প্রতিটা ফিড আইটেম এখানে সেটআপ করো — বাকি সব পেজে dropdown-এ দেখাবে
+            প্রতিটা ফিড আইটেম এখানে সেটআপ করো — Purchase Price Factory Order থেকে auto আপডেট হবে
           </p>
         </div>
         <button
@@ -228,7 +220,7 @@ const ProductMaster = () => {
         </div>
       </div>
 
-      {/* Search + filters — সব backend query param, client-side filter নেই */}
+      {/* Search + filters */}
       <div className="flex flex-col md:flex-row gap-3 mb-4">
         <input
           value={search}
@@ -259,7 +251,6 @@ const ProductMaster = () => {
         </select>
       </div>
 
-      {/* Loading / Empty */}
       {loading ? (
         <div className="text-center py-16 text-gray-400 text-sm">লোড হচ্ছে...</div>
       ) : products.length === 0 ? (
@@ -277,7 +268,7 @@ const ProductMaster = () => {
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Category</th>
                   <th className="px-4 py-3">Brand</th>
-                  <th className="px-4 py-3">Unit</th>
+                  <th className="px-4 py-3">Purchase Price</th>
                   <th className="px-4 py-3">Sale Price</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3"></th>
@@ -290,7 +281,11 @@ const ProductMaster = () => {
                     <td className="px-4 py-3 font-medium text-[#1f2b22]">{p.name}</td>
                     <td className="px-4 py-3 text-gray-600">{p.category}</td>
                     <td className="px-4 py-3 text-gray-600">{p.brand || "-"}</td>
-                    <td className="px-4 py-3 text-gray-600">{p.unit}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {p.purchasePricePerKg
+                        ? `৳${p.purchasePricePerKg.toFixed(2)}/kg`
+                        : <span className="text-gray-300">এখনো Order হয়নি</span>}
+                    </td>
                     <td className="px-4 py-3 text-gray-600">
                       {p.salePricePerKg ? `৳${p.salePricePerKg}/kg` : "-"}
                     </td>
@@ -348,8 +343,10 @@ const ProductMaster = () => {
                 </div>
                 <div className="text-xs text-gray-500 mt-2 flex flex-wrap gap-x-4 gap-y-1">
                   <span>Brand: {p.brand || "-"}</span>
-                  <span>Unit: {p.unit}</span>
-                  {p.salePricePerKg ? <span>৳{p.salePricePerKg}/kg</span> : null}
+                  <span>
+                    Purchase: {p.purchasePricePerKg ? `৳${p.purchasePricePerKg.toFixed(2)}/kg` : "N/A"}
+                  </span>
+                  {p.salePricePerKg ? <span>Sale: ৳{p.salePricePerKg}/kg</span> : null}
                 </div>
                 <div className="flex gap-4 mt-3 pt-3 border-t border-gray-100">
                   <button onClick={() => openEditModal(p)} className="text-xs font-semibold text-[#1f2b22]">
@@ -418,7 +415,6 @@ const ProductMaster = () => {
                 </div>
               </div>
 
-              {/* Inline new category input */}
               {addingCategory && (
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 -mt-1">
                   <label className="text-xs font-semibold text-gray-500 block mb-1.5">নতুন Category-র নাম</label>
@@ -452,29 +448,13 @@ const ProductMaster = () => {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 block mb-1">Unit *</label>
-                  <select
-                    value={form.unit}
-                    onChange={(e) => setForm({ ...form, unit: e.target.value as "kg" | "bosta" })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  >
-                    <option value="bosta">বসতা (Bag)</option>
-                    <option value="kg">kg</option>
-                  </select>
+              {/* Purchase Price — শুধু info হিসেবে দেখাবে, Edit mode এই দেখাবে */}
+              {editingId && (
+                <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-3 text-xs text-gray-500">
+                  <span className="font-semibold">Purchase Price:</span>{" "}
+                  {form.name ? "Factory Order থেকে auto আপডেট হয়, এখানে বদলানো যাবে না" : ""}
                 </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 block mb-1">প্রতি বসতার Weight (kg)</label>
-                  <input
-                    type="number"
-                    value={form.bagWeightKg}
-                    onChange={(e) => setForm({ ...form, bagWeightKg: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                    placeholder="30"
-                  />
-                </div>
-              </div>
+              )}
 
               <div>
                 <label className="text-xs font-semibold text-gray-500 block mb-1">Sale Price / kg (৳)</label>

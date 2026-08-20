@@ -22,11 +22,13 @@ const menuItems = [
   { icon: Package, label: "Product / Feed Master", path: "/dashboard/product" },
   { icon: Truck, label: "Factory Order", path: "/dashboard/factory-order" },
   { icon: Undo2, label: "Factory Return", path: "/dashboard/factory-return" },
+  { icon: Undo2, label: "Company Ledger", path: "/dashboard/company-ledger" },
   { icon: Boxes, label: "Stock", path: "/dashboard/stock" },
   { icon: ShoppingCart, label: "Sale / Stock Out", path: "/dashboard/sale" },
   { icon: BookText, label: "Dokan Ledger", path: "/dashboard/ledger" },
   { icon: Wallet, label: "Expense", path: "/dashboard/expense" },
   { icon: TrendingUp, label: "Profit & Loss", path: "/dashboard/profit-loss" },
+  { icon: Wallet, label: "Fund", path: "/dashboard/fund" },
 ];
 
 interface SidebarProps {
