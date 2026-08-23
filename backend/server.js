@@ -46,7 +46,7 @@ async function run() {
 
     const db = client.db(dbName);
 
-const Customers = db.collection("Customers");
+         const Customers = db.collection("Customers");
          const Sales = db.collection("Sales");
     
 
@@ -1091,28 +1091,14 @@ app.get("/stock", protect, async (req, res) => {
    ধাপ ৪ — CUSTOMERS (দোকান/গ্রাহক ledger)
 ========================================================================= */
 
+/* =========================================================
+   CUSTOMERS (দোকান) — Sale ও Dokan Ledger দুই জায়গাতেই লাগবে
+========================================================= */
+
 app.get("/customers", protect, async (req, res) => {
   try {
-    const { search = "" } = req.query;
-    const query = {};
-    if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
-      ];
-    }
-    const customers = await Customers.find(query).sort({ name: 1 }).toArray();
+    const customers = await Customers.find({}).sort({ name: 1 }).toArray();
     res.status(200).send(customers);
-  } catch (err) {
-    res.status(500).send({ message: "Server error", error: err.message });
-  }
-});
-
-app.get("/customers/:id", protect, async (req, res) => {
-  try {
-    const customer = await Customers.findOne({ _id: new ObjectId(req.params.id) });
-    if (!customer) return res.status(404).send({ message: "Customer পাওয়া যায়নি" });
-    res.status(200).send(customer);
   } catch (err) {
     res.status(500).send({ message: "Server error", error: err.message });
   }
@@ -1120,24 +1106,21 @@ app.get("/customers/:id", protect, async (req, res) => {
 
 app.post("/customers", protect, async (req, res) => {
   try {
-    const { name, phone, address } = req.body;
-
-    if (!name?.trim() || !phone?.trim() || !address?.trim()) {
-      return res.status(400).send({ message: "Name, Phone, Address — সবগুলো আবশ্যক" });
+    const { name, phone } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).send({ message: "দোকানের নাম দাও" });
     }
 
-    const existing = await Customers.findOne({ phone: phone.trim() });
+    const trimmed = name.trim();
+    const existing = await Customers.findOne({ name: { $regex: `^${trimmed}$`, $options: "i" } });
     if (existing) {
-      return res.status(400).send({ message: "এই Phone Number দিয়ে আগে থেকেই Customer আছে" });
+      return res.status(400).send({ message: "এই নামে দোকান আগে থেকেই আছে" });
     }
 
     const newCustomer = {
-      name: name.trim(),
-      phone: phone.trim(),
-      address: address.trim(),
-      totalBilled: 0,
-      totalPaid: 0,
-      totalDue: 0,
+      name: trimmed,
+      phone: phone?.trim() || "",
+      due: 0,
       createdBy: req.user._id,
       createdAt: new Date(),
     };
@@ -1149,163 +1132,31 @@ app.post("/customers", protect, async (req, res) => {
   }
 });
 
-app.patch("/customers/:id", protect, async (req, res) => {
+/* =========================================================
+   STOCK (view only)
+========================================================= */
+
+app.get("/stock", protect, async (req, res) => {
   try {
-    const _id = new ObjectId(req.params.id);
-    const existing = await Customers.findOne({ _id });
-    if (!existing) return res.status(404).send({ message: "Customer পাওয়া যায়নি" });
-
-    const updates = { updatedAt: new Date() };
-    if (req.body.name !== undefined) updates.name = req.body.name.trim();
-    if (req.body.phone !== undefined) updates.phone = req.body.phone.trim();
-    if (req.body.address !== undefined) updates.address = req.body.address.trim();
-
-    await Customers.updateOne({ _id }, { $set: updates });
-    const updated = await Customers.findOne({ _id });
-    res.status(200).send(updated);
+    const stock = await Stock.find({}).toArray();
+    const formatted = stock.map((s) => ({
+      ...s,
+      productId: s.productId.toString(),
+    }));
+    res.status(200).send(formatted);
   } catch (err) {
     res.status(500).send({ message: "Server error", error: err.message });
   }
 });
 
-app.delete("/customers/:id", protect, async (req, res) => {
-  try {
-    const _id = new ObjectId(req.params.id);
-    const customer = await Customers.findOne({ _id });
-    if (!customer) return res.status(404).send({ message: "Customer পাওয়া যায়নি" });
-
-    const hasSales = await Sales.findOne({ customerId: _id });
-    if (hasSales) {
-      return res.status(400).send({ message: "এই Customer এর Sale History আছে, Delete করা যাবে না" });
-    }
-
-    await Customers.deleteOne({ _id });
-    res.status(200).send({ message: "Customer Delete হয়েছে" });
-  } catch (err) {
-    res.status(500).send({ message: "Server error", error: err.message });
-  }
-});
-
-// বাকি টাকা পরে আদায় (customer লিস্টে বাকি দেখে, সরাসরি এখান থেকে টাকা তোলা যাবে)
-app.post("/customers/:id/payment", protect, async (req, res) => {
-  try {
-    const _id = new ObjectId(req.params.id);
-    const { amount, fundId, note, date } = req.body;
-
-    const amountNum = Number(amount);
-    if (!amountNum || amountNum <= 0) {
-      return res.status(400).send({ message: "সঠিক Amount দাও" });
-    }
-
-    const customer = await Customers.findOne({ _id });
-    if (!customer) return res.status(404).send({ message: "Customer পাওয়া যায়নি" });
-
-    if (amountNum > customer.totalDue) {
-      return res.status(400).send({
-        message: `বাকি আছে মাত্র ৳${customer.totalDue.toLocaleString()}, তার বেশি নেওয়া যাবে না`,
-      });
-    }
-
-    const fund = fundId
-      ? await Funds.findOne({ _id: new ObjectId(fundId) })
-      : await Funds.findOne({ name: "Cash in Hand" });
-    if (!fund) return res.status(404).send({ message: "Fund পাওয়া যায়নি" });
-
-    await Funds.updateOne(
-      { _id: fund._id },
-      { $inc: { balance: amountNum, totalIn: amountNum }, $set: { updatedAt: new Date() } }
-    );
-
-    await Customers.updateOne(
-      { _id },
-      { $inc: { totalPaid: amountNum, totalDue: -amountNum }, $set: { updatedAt: new Date() } }
-    );
-
-    await FundTransactions.insertOne({
-      fundId: fund._id,
-      fundName: fund.name,
-      type: "customer_due_collection",
-      direction: "in",
-      amount: amountNum,
-      note: note?.trim() || `বাকি আদায় — ${customer.name}`,
-      date: date || new Date().toISOString().slice(0, 10),
-      createdBy: req.user._id,
-      createdAt: new Date(),
-    });
-
-    const updated = await Customers.findOne({ _id });
-    res.status(200).send(updated);
-  } catch (err) {
-    res.status(500).send({ message: "Server error", error: err.message });
-  }
-});
-
-app.get("/customers/:id/sales", protect, async (req, res) => {
-  try {
-    const customerId = new ObjectId(req.params.id);
-    const sales = await Sales.find({ customerId }).sort({ date: -1, createdAt: -1 }).toArray();
-    res.status(200).send(sales);
-  } catch (err) {
-    res.status(500).send({ message: "Server error", error: err.message });
-  }
-});
-
-
-/* =========================================================================
-   ধাপ ৫ — SALES (Sale / Stock Out)
-========================================================================= */
+/* =========================================================
+   SALES (বিক্রি + Profit/Loss + Fund + Customer Due)
+========================================================= */
 
 app.get("/sales", protect, async (req, res) => {
   try {
-    const {
-      search = "",
-      from = "",
-      to = "",
-      customerId = "",
-      page = "1",
-      limit = "10",
-    } = req.query;
-
-    const query = {};
-    if (search) {
-      query.$or = [
-        { customerName: { $regex: search, $options: "i" } },
-        { customerPhone: { $regex: search, $options: "i" } },
-      ];
-    }
-    if (customerId) query.customerId = new ObjectId(customerId);
-    if (from || to) {
-      query.date = {};
-      if (from) query.date.$gte = from;
-      if (to) query.date.$lte = to;
-    }
-
-    const pageNum = Math.max(1, Number(page) || 1);
-    const limitNum = Math.max(1, Number(limit) || 10);
-
-    const totalCount = await Sales.countDocuments(query);
-    const sales = await Sales.find(query)
-      .sort({ date: -1, createdAt: -1 })
-      .skip((pageNum - 1) * limitNum)
-      .limit(limitNum)
-      .toArray();
-
-    res.status(200).send({
-      sales,
-      totalCount,
-      totalPages: Math.max(1, Math.ceil(totalCount / limitNum)),
-      currentPage: pageNum,
-    });
-  } catch (err) {
-    res.status(500).send({ message: "Server error", error: err.message });
-  }
-});
-
-app.get("/sales/:id", protect, async (req, res) => {
-  try {
-    const sale = await Sales.findOne({ _id: new ObjectId(req.params.id) });
-    if (!sale) return res.status(404).send({ message: "Sale পাওয়া যায়নি" });
-    res.status(200).send(sale);
+    const sales = await Sales.find({}).sort({ date: -1, createdAt: -1 }).toArray();
+    res.status(200).send(sales);
   } catch (err) {
     res.status(500).send({ message: "Server error", error: err.message });
   }
@@ -1313,76 +1164,69 @@ app.get("/sales/:id", protect, async (req, res) => {
 
 app.post("/sales", protect, async (req, res) => {
   try {
-    const { customerId, date, items, paidAmount, fundId } = req.body;
+    const { date, customerId, productId, kg, rate, paidAmount, fundId } = req.body;
 
-    if (!customerId || !date) {
-      return res.status(400).send({ message: "Customer ও Date আবশ্যক" });
+    if (!date || !customerId || !productId || !kg || !rate) {
+      return res.status(400).send({ message: "সব ফিল্ড পূরণ করো" });
     }
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).send({ message: "অন্তত একটা Product যোগ করো" });
+
+    const kgNum = Number(kg);
+    const rateNum = Number(rate);
+    const paidNum = Number(paidAmount) || 0;
+
+    if (kgNum <= 0 || rateNum <= 0) {
+      return res.status(400).send({ message: "kg ও rate ০ এর বেশি হতে হবে" });
     }
 
     const customer = await Customers.findOne({ _id: new ObjectId(customerId) });
     if (!customer) return res.status(404).send({ message: "Customer পাওয়া যায়নি" });
 
-    const normalizedItems = [];
-    let totalAmount = 0;
+    const product = await Products.findOne({ _id: new ObjectId(productId) });
+    if (!product) return res.status(404).send({ message: "Product পাওয়া যায়নি" });
 
-    for (const item of items) {
-      const { productId, quantityKg, ratePerKg } = item;
-      const qtyNum = Number(quantityKg);
-      const rateNum = Number(ratePerKg);
-
-      if (!productId || !qtyNum || qtyNum <= 0 || !rateNum || rateNum <= 0) {
-        return res.status(400).send({ message: "প্রতিটা Product line এ সঠিক kg ও Rate দাও" });
-      }
-
-      const product = await Products.findOne({ _id: new ObjectId(productId) });
-      if (!product) return res.status(404).send({ message: "Product পাওয়া যায়নি" });
-
-      const stock = await Stock.findOne({ productId: product._id });
-      const availableKg = stock?.currentKg || 0;
-      if (qtyNum > availableKg) {
-        return res.status(400).send({
-          message: `${product.name} এ Stock আছে মাত্র ${availableKg.toLocaleString()}kg, তুমি ${qtyNum}kg দিয়েছো`,
-        });
-      }
-
-      const amount = qtyNum * rateNum;
-
-      normalizedItems.push({
-        productId: product._id,
-        productName: product.name,
-        quantityKg: qtyNum,
-        ratePerKg: rateNum,
-        amount,
+    const stockEntry = await Stock.findOne({ productId: product._id });
+    const currentKg = stockEntry?.currentKg || 0;
+    if (currentKg < kgNum) {
+      return res.status(400).send({
+        message: `Stock এ যথেষ্ট kg নেই। বর্তমানে আছে: ${currentKg}kg`,
       });
-
-      totalAmount += amount;
     }
 
-    let paidNum = Number(paidAmount) || 0;
-    if (paidNum < 0) paidNum = 0;
-    if (paidNum > totalAmount) paidNum = totalAmount;
-    const dueNum = totalAmount - paidNum;
+    const totalBill = kgNum * rateNum;
+    const due = totalBill - paidNum;
+    if (due < 0) {
+      return res.status(400).send({ message: "Paid Amount, মোট বিলের চেয়ে বেশি হতে পারবে না" });
+    }
 
+    const purchasePrice = product.purchasePricePerKg || 0;
+    const totalProfit = (rateNum - purchasePrice) * kgNum; // পুরো বিলের profit/loss (accrual)
+
+    // Paid Amount দিলে Fund লাগবে
     let fund = null;
     if (paidNum > 0) {
-      fund = fundId
-        ? await Funds.findOne({ _id: new ObjectId(fundId) })
-        : await Funds.findOne({ name: "Cash in Hand" });
+      if (!fundId) return res.status(400).send({ message: "Paid Amount দিলে Fund Source বেছে নাও" });
+      fund = await Funds.findOne({ _id: new ObjectId(fundId) });
       if (!fund) return res.status(404).send({ message: "Fund পাওয়া যায়নি" });
     }
 
+    // শুধু আসলে হাতে আসা টাকার proportion অনুযায়ী profit realize হবে (Profit Fund এ)
+    const paidRatio = totalBill > 0 ? paidNum / totalBill : 0;
+    const realizedProfit = totalProfit * paidRatio;
+
     const newSale = {
+      date,
       customerId: customer._id,
       customerName: customer.name,
-      customerPhone: customer.phone,
-      date,
-      items: normalizedItems,
-      totalAmount,
+      productId: product._id,
+      productName: product.name,
+      kg: kgNum,
+      rate: rateNum,
+      purchasePriceAtSale: purchasePrice,
+      totalBill,
       paidAmount: paidNum,
-      dueAmount: dueNum,
+      due,
+      totalProfit, // পুরো বিলের হিসাবে profit/loss (accrual — Profit & Loss report এ কাজে লাগবে)
+      realizedProfit, // শুধু cash আসা অংশের profit (Profit Fund এ যোগ হবে)
       fundId: fund ? fund._id : null,
       fundName: fund ? fund.name : null,
       createdBy: req.user._id,
@@ -1391,24 +1235,21 @@ app.post("/sales", protect, async (req, res) => {
 
     const result = await Sales.insertOne(newSale);
 
-    // Stock কমানো (kg হিসাবে, broken bag নিজে থেকেই currentKg % bagSize থেকে বের হয়ে যাবে)
-    for (const item of normalizedItems) {
-      await Stock.updateOne(
-        { productId: item.productId },
-        { $inc: { currentKg: -item.quantityKg }, $set: { updatedAt: new Date() } }
+    // Stock কমাও
+    await Stock.updateOne(
+      { productId: product._id },
+      { $inc: { currentKg: -kgNum }, $set: { updatedAt: new Date() } }
+    );
+
+    // Customer due বাড়াও
+    if (due > 0) {
+      await Customers.updateOne(
+        { _id: customer._id },
+        { $inc: { due: due }, $set: { updatedAt: new Date() } }
       );
     }
 
-    // Customer ledger আপডেট
-    await Customers.updateOne(
-      { _id: customer._id },
-      {
-        $inc: { totalBilled: totalAmount, totalPaid: paidNum, totalDue: dueNum },
-        $set: { updatedAt: new Date() },
-      }
-    );
-
-    // Paid অংশ Fund এ জমা
+    // Paid Amount থাকলে সেই Fund এ জমা করো
     if (paidNum > 0 && fund) {
       await Funds.updateOne(
         { _id: fund._id },
@@ -1421,54 +1262,67 @@ app.post("/sales", protect, async (req, res) => {
         type: "sale_payment",
         direction: "in",
         amount: paidNum,
-        note: `Sale Payment — ${customer.name}`,
+        note: `Sale — ${customer.name} (${product.name})`,
         date,
         createdBy: req.user._id,
         createdAt: new Date(),
       });
     }
 
-    const saved = await Sales.findOne({ _id: result.insertedId });
-    res.status(201).send(saved);
+    // Realized profit থাকলে Profit Fund এ যোগ করো (হিসাবি, Cash in Hand এর সাথে sync)
+    if (realizedProfit !== 0) {
+      const profitFund = await Funds.findOne({ type: "profit" });
+      if (profitFund) {
+        await Funds.updateOne(
+          { _id: profitFund._id },
+          {
+            $inc: {
+              balance: realizedProfit,
+              totalIn: realizedProfit > 0 ? realizedProfit : 0,
+              totalOut: realizedProfit < 0 ? -realizedProfit : 0,
+            },
+            $set: { updatedAt: new Date() },
+          }
+        );
+      }
+    }
+
+    const savedSale = await Sales.findOne({ _id: result.insertedId });
+    res.status(201).send(savedSale);
   } catch (err) {
     console.error("sales POST error:", err);
     res.status(500).send({ message: "Server error", error: err.message });
   }
 });
 
+/* ================= DELETE sale (সব উল্টে দেওয়া) ================= */
 app.delete("/sales/:id", protect, async (req, res) => {
   try {
     const _id = new ObjectId(req.params.id);
     const sale = await Sales.findOne({ _id });
     if (!sale) return res.status(404).send({ message: "Sale পাওয়া যায়নি" });
 
-    // Stock ফেরত
-    for (const item of sale.items) {
-      await Stock.updateOne(
-        { productId: item.productId },
-        { $inc: { currentKg: item.quantityKg }, $set: { updatedAt: new Date() } }
+    // Stock ফেরত দাও
+    await Stock.updateOne(
+      { productId: sale.productId },
+      { $inc: { currentKg: sale.kg }, $set: { updatedAt: new Date() } }
+    );
+
+    // Customer due ফেরত নাও
+    if (sale.due > 0) {
+      await Customers.updateOne(
+        { _id: sale.customerId },
+        { $inc: { due: -sale.due }, $set: { updatedAt: new Date() } }
       );
     }
 
-    // Customer ledger ফেরত
-    await Customers.updateOne(
-      { _id: sale.customerId },
-      {
-        $inc: {
-          totalBilled: -sale.totalAmount,
-          totalPaid: -sale.paidAmount,
-          totalDue: -sale.dueAmount,
-        },
-        $set: { updatedAt: new Date() },
-      }
-    );
-
-    // Fund ফেরত
+    // Fund থেকে paid amount ফেরত নাও
     if (sale.paidAmount > 0 && sale.fundId) {
       await Funds.updateOne(
         { _id: sale.fundId },
         { $inc: { balance: -sale.paidAmount, totalIn: -sale.paidAmount }, $set: { updatedAt: new Date() } }
       );
+
       await FundTransactions.insertOne({
         fundId: sale.fundId,
         fundName: sale.fundName,
@@ -1482,8 +1336,19 @@ app.delete("/sales/:id", protect, async (req, res) => {
       });
     }
 
+    // Profit Fund থেকে realized profit ফেরত নাও
+    if (sale.realizedProfit !== 0) {
+      const profitFund = await Funds.findOne({ type: "profit" });
+      if (profitFund) {
+        await Funds.updateOne(
+          { _id: profitFund._id },
+          { $inc: { balance: -sale.realizedProfit }, $set: { updatedAt: new Date() } }
+        );
+      }
+    }
+
     await Sales.deleteOne({ _id });
-    res.status(200).send({ message: "Sale Delete হয়েছে ও সব হিসাব ফেরত নেওয়া হয়েছে" });
+    res.status(200).send({ message: "Sale delete হয়েছে ও সব হিসাব ফেরত নেওয়া হয়েছে" });
   } catch (err) {
     console.error("sales DELETE error:", err);
     res.status(500).send({ message: "Server error", error: err.message });
