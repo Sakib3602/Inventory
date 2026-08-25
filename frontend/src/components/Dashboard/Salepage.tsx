@@ -10,8 +10,9 @@ interface Fund {
 interface Product {
   _id: string;
   name: string;
+  bagSize: number;
+  salePricePerBag: number;
   purchasePricePerKg: number;
-  salePricePerKg: number;
 }
 
 interface Customer {
@@ -24,6 +25,8 @@ interface Customer {
 interface StockItem {
   productId: string;
   currentKg: number;
+  fullBags?: number;
+  brokenKg?: number;
 }
 
 interface Sale {
@@ -31,10 +34,11 @@ interface Sale {
   date: string;
   customerName: string;
   productName: string;
-  kg: number;
-  bagCount?: number;
-  kgPerBag?: number;
-  rate: number;
+  bagCount: number;
+  bagSize: number;
+  ratePerBag: number;
+  subtotal: number;
+  discount: number;
   totalBill: number;
   paidAmount: number;
   due: number;
@@ -43,21 +47,17 @@ interface Sale {
 }
 
 const toNum = (value: unknown) => {
-  const n = typeof value === "number" ? value : Number(value ?? 0);
+  const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : 0;
 };
 
-const toSafeNumber = (value: number | string | null | undefined, fallback = 0) => {
-  const n = typeof value === "number" ? value : Number(value ?? 0);
-  return Number.isFinite(n) ? n : fallback;
-};
-
-const formatMoney = (value: number | string | null | undefined) => toSafeNumber(value).toLocaleString();
-
 const normalizeSale = (s: Record<string, unknown>): Sale => ({
   ...(s as unknown as Sale),
-  kg: toNum(s.kg),
-  rate: toNum(s.rate),
+  bagCount: toNum(s.bagCount),
+  bagSize: toNum(s.bagSize),
+  ratePerBag: toNum(s.ratePerBag),
+  subtotal: toNum(s.subtotal),
+  discount: toNum(s.discount),
   totalBill: toNum(s.totalBill),
   paidAmount: toNum(s.paidAmount),
   due: toNum(s.due),
@@ -73,19 +73,17 @@ const SalePage = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
 
-  // Sale modal
   const [modalOpen, setModalOpen] = useState(false);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [customerId, setCustomerId] = useState("");
   const [productId, setProductId] = useState("");
   const [bagCount, setBagCount] = useState("");
-  const [kgPerBag, setKgPerBag] = useState("");
-  const [rate, setRate] = useState("");
+  const [ratePerBag, setRatePerBag] = useState("");
+  const [discount, setDiscount] = useState("");
   const [paidAmount, setPaidAmount] = useState("");
   const [fundId, setFundId] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Quick add customer
   const [addCustomerOpen, setAddCustomerOpen] = useState(false);
   const [newCustName, setNewCustName] = useState("");
   const [newCustPhone, setNewCustPhone] = useState("");
@@ -110,8 +108,7 @@ const SalePage = () => {
         axiosInstance.get("/stock"),
         axiosInstance.get("/funds"),
       ]);
-      const salesRes_data = (salesRes.data as Record<string, unknown>[]).map(normalizeSale);
-      setSales(salesRes_data);
+      setSales((salesRes.data as Record<string, unknown>[]).map(normalizeSale));
       setCustomers(customersRes.data);
       setProducts(productsRes.data);
       setStock(stockRes.data);
@@ -133,32 +130,36 @@ const SalePage = () => {
     setCustomerId("");
     setProductId("");
     setBagCount("");
-    setKgPerBag("");
-    setRate("");
+    setRatePerBag("");
+    setDiscount("");
     setPaidAmount("");
     setFundId(funds[0]?._id || "");
     setModalOpen(true);
   };
 
   const selectedProduct = products.find((p) => p._id === productId);
-  const selectedProductStock = stock.find((s) => s.productId === productId)?.currentKg || 0;
+  const selectedStock = stock.find((s) => s.productId === productId);
+  const selectedProductStockKg = selectedStock?.currentKg || 0;
+  const bagSize = selectedProduct?.bagSize || 0;
+  const availableBags = bagSize > 0 ? Math.floor(selectedProductStockKg / bagSize) : 0;
 
-  // Product বাছলে Sale Price auto বসাও
   const handleProductSelect = (id: string) => {
     setProductId(id);
     const p = products.find((x) => x._id === id);
-    if (p) setRate(String(p.salePricePerKg || ""));
+    setRatePerBag(p?.salePricePerBag ? String(p.salePricePerBag) : "");
   };
 
   const bagCountNum = Number(bagCount) || 0;
-  const kgPerBagNum = Number(kgPerBag) || 0;
-  const kgNum = bagCountNum * kgPerBagNum;
-  const rateNum = Number(rate) || 0;
+  const ratePerBagNum = Number(ratePerBag) || 0;
+  const discountNum = Number(discount) || 0;
   const paidNum = Number(paidAmount) || 0;
-  const totalBill = kgNum * rateNum;
+
+  const subtotal = bagCountNum * ratePerBagNum;
+  const totalBill = Math.max(0, subtotal - discountNum);
   const due = totalBill - paidNum;
+  const kgNum = bagCountNum * bagSize;
   const purchasePrice = selectedProduct?.purchasePricePerKg || 0;
-  const profitLoss = (rateNum - purchasePrice) * kgNum;
+  const profitLoss = totalBill - kgNum * purchasePrice;
 
   const handleAddCustomer = async () => {
     if (!newCustName.trim()) return showToast("⚠️ দোকানের নাম দাও");
@@ -181,10 +182,11 @@ const SalePage = () => {
   const handleSave = async () => {
     if (!customerId) return showToast("⚠️ দোকান বেছে নাও");
     if (!productId) return showToast("⚠️ Product বেছে নাও");
-    if (!bagCount || !kgPerBag) return showToast("⚠️ বস্তা সংখ্যা ও kg/বস্তা দাও");
-    if (!rate) return showToast("⚠️ rate দাও");
-    if (kgNum > selectedProductStock) {
-      return showToast(`⚠️ Stock এ মাত্র ${selectedProductStock}kg আছে`);
+    if (!bagSize) return showToast("⚠️ এই Product এর বস্তার ওজন Product Master এ সেট করা নেই");
+    if (!bagCount) return showToast("⚠️ বস্তা সংখ্যা দাও");
+    if (!ratePerBag) return showToast("⚠️ প্রতি বস্তার রেট দাও");
+    if (bagCountNum > availableBags) {
+      return showToast(`⚠️ Stock এ মাত্র ${availableBags} বস্তা আছে`);
     }
     if (due < 0) return showToast("⚠️ Paid Amount বিলের চেয়ে বেশি হতে পারবে না");
     if (paidNum > 0 && !fundId) return showToast("⚠️ Paid Amount দিলে Fund বেছে নাও");
@@ -195,8 +197,9 @@ const SalePage = () => {
         date,
         customerId,
         productId,
-        kg: kgNum,
-        rate,
+        bagCount: bagCountNum,
+        ratePerBag: ratePerBagNum,
+        discount: discountNum || undefined,
         paidAmount: paidNum || undefined,
         fundId: paidNum > 0 ? fundId : undefined,
       });
@@ -222,9 +225,10 @@ const SalePage = () => {
     }
   };
 
-  const totalRevenue = sales.reduce((sum, sale) => sum + toSafeNumber(sale.totalBill), 0);
-  const totalProfitLoss = sales.reduce((sum, sale) => sum + toSafeNumber(sale.totalProfit), 0);
-  const totalDue = sales.reduce((sum, sale) => sum + toSafeNumber(sale.due), 0);
+  const totalRevenue = sales.reduce((s, x) => s + x.totalBill, 0);
+  const totalProfitLoss = sales.reduce((s, x) => s + x.totalProfit, 0);
+  const totalDue = sales.reduce((s, x) => s + x.due, 0);
+  const totalDiscount = sales.reduce((s, x) => s + x.discount, 0);
 
   return (
     <div>
@@ -232,7 +236,7 @@ const SalePage = () => {
         <div>
           <h1 className="text-xl font-semibold text-[#1f2b22]">Sale / Stock Out</h1>
           <p className="text-sm text-gray-400 mt-0.5">
-            বিক্রি এন্ট্রি দাও — সাথে সাথে Profit/Loss দেখাবে, বাকি থাকলে দোকানের নামে জমা হবে
+            Product ও বস্তা সংখ্যা দাও — সব হিসাব auto হয়ে যাবে, চাইলে Discount দাও
           </p>
         </div>
         <button
@@ -249,21 +253,24 @@ const SalePage = () => {
         </div>
       )}
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <p className="text-2xl font-bold text-[#1f2b22]">৳{formatMoney(totalRevenue)}</p>
+          <p className="text-2xl font-bold text-[#1f2b22]">৳{totalRevenue.toLocaleString()}</p>
           <p className="text-xs text-gray-400 mt-1">মোট বিক্রি (Revenue)</p>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <p className={`text-2xl font-bold ${totalProfitLoss >= 0 ? "text-emerald-700" : "text-red-500"}`}>
-            {totalProfitLoss >= 0 ? "+" : ""}৳{formatMoney(totalProfitLoss)}
+            {totalProfitLoss >= 0 ? "+" : ""}৳{totalProfitLoss.toLocaleString()}
           </p>
           <p className="text-xs text-gray-400 mt-1">মোট Profit / Loss</p>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <p className="text-2xl font-bold text-amber-600">৳{formatMoney(totalDue)}</p>
+          <p className="text-2xl font-bold text-amber-600">৳{totalDue.toLocaleString()}</p>
           <p className="text-xs text-gray-400 mt-1">মোট বাকি (Due)</p>
+        </div>
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <p className="text-2xl font-bold text-gray-500">৳{totalDiscount.toLocaleString()}</p>
+          <p className="text-xs text-gray-400 mt-1">মোট Discount দেওয়া হয়েছে</p>
         </div>
       </div>
 
@@ -275,7 +282,6 @@ const SalePage = () => {
         </div>
       ) : (
         <>
-          {/* Desktop table */}
           <div className="hidden md:block bg-white border border-gray-200 rounded-xl overflow-hidden">
             <table className="w-full text-sm">
               <thead>
@@ -283,8 +289,9 @@ const SalePage = () => {
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">দোকান</th>
                   <th className="px-4 py-3">Product</th>
-                  <th className="px-4 py-3">kg</th>
-                  <th className="px-4 py-3">Rate</th>
+                  <th className="px-4 py-3">বস্তা</th>
+                  <th className="px-4 py-3">Rate/বস্তা</th>
+                  <th className="px-4 py-3">Discount</th>
                   <th className="px-4 py-3">Total</th>
                   <th className="px-4 py-3">Paid</th>
                   <th className="px-4 py-3">Due</th>
@@ -293,84 +300,73 @@ const SalePage = () => {
                 </tr>
               </thead>
               <tbody>
-                {sales.map((s) => {
-                  const totalBill = toSafeNumber(s.totalBill);
-                  const paidAmount = toSafeNumber(s.paidAmount);
-                  const due = toSafeNumber(s.due);
-                  const totalProfit = toSafeNumber(s.totalProfit);
-
-                  return (
-                    <tr key={s._id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50/60">
-                      <td className="px-4 py-3 text-gray-500 text-xs">{s.date}</td>
-                      <td className="px-4 py-3 font-medium text-[#1f2b22]">{s.customerName}</td>
-                      <td className="px-4 py-3 text-gray-600">{s.productName}</td>
-                      <td className="px-4 py-3 text-gray-600">{s.kg}</td>
-                      <td className="px-4 py-3 text-gray-600">৳{s.rate}</td>
-                      <td className="px-4 py-3 text-gray-600">৳{formatMoney(totalBill)}</td>
-                      <td className="px-4 py-3 text-gray-600">৳{formatMoney(paidAmount)}</td>
-                      <td className="px-4 py-3">
-                        {due > 0 ? (
-                          <span className="text-amber-600 font-semibold">৳{formatMoney(due)}</span>
-                        ) : (
-                          <span className="text-gray-300">০</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={totalProfit >= 0 ? "text-emerald-600 font-semibold" : "text-red-500 font-semibold"}>
-                          {totalProfit >= 0 ? "+" : ""}৳{formatMoney(totalProfit)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button onClick={() => setDeleteTarget(s)} className="text-xs text-red-500 hover:underline">
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {sales.map((s) => (
+                  <tr key={s._id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50/60">
+                    <td className="px-4 py-3 text-gray-500 text-xs">{s.date}</td>
+                    <td className="px-4 py-3 font-medium text-[#1f2b22]">{s.customerName}</td>
+                    <td className="px-4 py-3 text-gray-600">{s.productName}</td>
+                    <td className="px-4 py-3 text-gray-600">{s.bagCount}</td>
+                    <td className="px-4 py-3 text-gray-600">৳{s.ratePerBag}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {s.discount > 0 ? `৳${s.discount.toLocaleString()}` : <span className="text-gray-300">-</span>}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">৳{s.totalBill.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-gray-600">৳{s.paidAmount.toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      {s.due > 0 ? (
+                        <span className="text-amber-600 font-semibold">৳{s.due.toLocaleString()}</span>
+                      ) : (
+                        <span className="text-gray-300">০</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={s.totalProfit >= 0 ? "text-emerald-600 font-semibold" : "text-red-500 font-semibold"}>
+                        {s.totalProfit >= 0 ? "+" : ""}৳{s.totalProfit.toLocaleString()}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button onClick={() => setDeleteTarget(s)} className="text-xs text-red-500 hover:underline">
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
 
-          {/* Mobile cards */}
           <div className="md:hidden flex flex-col gap-3">
-            {sales.map((s) => {
-              const totalBill = toSafeNumber(s.totalBill);
-              const paidAmount = toSafeNumber(s.paidAmount);
-              const due = toSafeNumber(s.due);
-              const totalProfit = toSafeNumber(s.totalProfit);
-
-              return (
-                <div key={s._id} className="bg-white border border-gray-200 rounded-xl p-4">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-semibold text-[#1f2b22]">{s.customerName}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {s.date} · {s.productName}
-                      </p>
-                    </div>
-                    <span className={totalProfit >= 0 ? "text-emerald-600 font-bold text-sm" : "text-red-500 font-bold text-sm"}>
-                      {totalProfit >= 0 ? "+" : ""}৳{formatMoney(totalProfit)}
-                    </span>
+            {sales.map((s) => (
+              <div key={s._id} className="bg-white border border-gray-200 rounded-xl p-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <p className="font-semibold text-[#1f2b22]">{s.customerName}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {s.date} · {s.productName}
+                    </p>
                   </div>
-                  <div className="text-xs text-gray-500 mt-2 flex flex-wrap gap-x-4 gap-y-1">
-                    <span>{s.kg}kg × ৳{s.rate} = ৳{formatMoney(totalBill)}</span>
-                    <span>Paid: ৳{formatMoney(paidAmount)}</span>
-                    {due > 0 && <span className="text-amber-600 font-semibold">Due: ৳{formatMoney(due)}</span>}
-                  </div>
-                  <div className="flex gap-4 mt-3 pt-3 border-t border-gray-100">
-                    <button onClick={() => setDeleteTarget(s)} className="text-xs font-semibold text-red-500">
-                      Delete
-                    </button>
-                  </div>
+                  <span className={s.totalProfit >= 0 ? "text-emerald-600 font-bold text-sm" : "text-red-500 font-bold text-sm"}>
+                    {s.totalProfit >= 0 ? "+" : ""}৳{s.totalProfit.toLocaleString()}
+                  </span>
                 </div>
-              );
-            })}
+                <div className="text-xs text-gray-500 mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                  <span>{s.bagCount} বস্তা × ৳{s.ratePerBag} = ৳{s.subtotal.toLocaleString()}</span>
+                  {s.discount > 0 && <span>Discount: ৳{s.discount.toLocaleString()}</span>}
+                  <span>Total: ৳{s.totalBill.toLocaleString()}</span>
+                  <span>Paid: ৳{s.paidAmount.toLocaleString()}</span>
+                  {s.due > 0 && <span className="text-amber-600 font-semibold">Due: ৳{s.due.toLocaleString()}</span>}
+                </div>
+                <div className="flex gap-4 mt-3 pt-3 border-t border-gray-100">
+                  <button onClick={() => setDeleteTarget(s)} className="text-xs font-semibold text-red-500">
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </>
       )}
 
-      {/* Add Sale Modal */}
       {modalOpen && (
         <div
           className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
@@ -412,14 +408,14 @@ const SalePage = () => {
                   <option value="">দোকান বেছে নাও</option>
                   {customers.map((c) => (
                     <option key={c._id} value={c._id}>
-                      {c.name} {toSafeNumber(c.due) > 0 ? `(আগের বাকি ৳${formatMoney(c.due)})` : ""}
+                      {c.name} {c.due > 0 ? `(আগের বাকি ৳${c.due.toLocaleString()})` : ""}
                     </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-gray-500 block mb-1">Product *</label>
+                <label className="text-xs font-semibold text-gray-500 block mb-1">Product (কয়টা) *</label>
                 <select
                   value={productId}
                   onChange={(e) => handleProductSelect(e.target.value)}
@@ -434,15 +430,22 @@ const SalePage = () => {
                 </select>
                 {productId && (
                   <p className="text-xs text-gray-400 mt-1">
-                    Stock এ আছে: <span className="font-semibold">{selectedProductStock}kg</span> · Purchase
-                    Price: ৳{purchasePrice.toFixed(2)}/kg
+                    {bagSize > 0 ? (
+                      <>
+                        Stock এ আছে: <span className="font-semibold">{availableBags} বস্তা</span> ({bagSize}kg/বস্তা হিসাবে)
+                      </>
+                    ) : (
+                      <span className="text-red-500">
+                        ⚠️ এই Product এর বস্তার ওজন সেট করা নেই — Product Master এ গিয়ে সেট করো
+                      </span>
+                    )}
                   </p>
                 )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-semibold text-gray-500 block mb-1">বস্তা সংখ্যা *</label>
+                  <label className="text-xs font-semibold text-gray-500 block mb-1">বস্তা সংখ্যা (কয়টা) *</label>
                   <input
                     type="number"
                     value={bagCount}
@@ -452,36 +455,44 @@ const SalePage = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-gray-500 block mb-1">kg / বস্তা *</label>
+                  <label className="text-xs font-semibold text-gray-500 block mb-1">Rate / বস্তা (৳) *</label>
                   <input
                     type="number"
-                    value={kgPerBag}
-                    onChange={(e) => setKgPerBag(e.target.value)}
+                    value={ratePerBag}
+                    onChange={(e) => setRatePerBag(e.target.value)}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                    placeholder="30"
+                    placeholder="2000"
                   />
                 </div>
               </div>
-
-              {kgNum > 0 && (
-                <div className="bg-[#f6f5f1] rounded-lg p-3 text-sm -mt-1">
-                  মোট Quantity:{" "}
-                  <span className="font-bold text-[#1f2b22]">{formatMoney(kgNum)} kg</span>
-                  {kgNum > selectedProductStock && (
-                    <span className="text-red-500 font-semibold"> — Stock এর চেয়ে বেশি!</span>
-                  )}
-                </div>
-              )}
+              {selectedProduct?.salePricePerBag ? (
+                <p className="text-[11px] text-gray-400 -mt-2">
+                  Product এর default rate: ৳{selectedProduct.salePricePerBag}/বস্তা (চাইলে বদলাতে পারো)
+                </p>
+              ) : null}
 
               <div>
-                <label className="text-xs font-semibold text-gray-500 block mb-1">Rate per kg (৳) *</label>
+                <label className="text-xs font-semibold text-gray-500 block mb-1">Discount (৳, ঐচ্ছিক)</label>
                 <input
                   type="number"
-                  value={rate}
-                  onChange={(e) => setRate(e.target.value)}
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  placeholder="65"
+                  placeholder="ছাড় দিতে চাইলে লিখো"
                 />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 block mb-1">মোট বিক্রি মূল্য (৳)</label>
+                <div className="w-full border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm font-bold text-[#1f2b22]">
+                  ৳{totalBill.toLocaleString()}
+                </div>
+                {discountNum > 0 && (
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    ({bagCountNum} × ৳{ratePerBagNum} = ৳{subtotal.toLocaleString()}) − Discount ৳
+                    {discountNum.toLocaleString()}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -491,7 +502,7 @@ const SalePage = () => {
                   value={paidAmount}
                   onChange={(e) => setPaidAmount(e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  placeholder="পুরো টাকা পেলে বিল এর সমান লিখো, না হলে যা পেয়েছো"
+                  placeholder="পুরো টাকা পেলে totalBill এর সমান লিখো, না হলে যা পেয়েছো"
                 />
               </div>
 
@@ -508,7 +519,7 @@ const SalePage = () => {
                       .filter((f) => f.name !== "Profit Fund")
                       .map((f) => (
                         <option key={f._id} value={f._id}>
-                          {f.name} (৳{formatMoney(f.balance)})
+                          {f.name} (৳{f.balance.toLocaleString()})
                         </option>
                       ))}
                   </select>
@@ -516,23 +527,18 @@ const SalePage = () => {
               )}
             </div>
 
-            {/* Live calculation summary */}
-            {kgNum > 0 && rateNum > 0 && (
+            {bagCountNum > 0 && ratePerBagNum > 0 && (
               <div className="bg-[#f6f5f1] rounded-lg p-4 mt-4 flex flex-col gap-1.5 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">মোট বিল</span>
-                  <span className="font-semibold text-[#1f2b22]">৳{formatMoney(totalBill)}</span>
-                </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Due (বাকি থাকবে)</span>
                   <span className={`font-semibold ${due > 0 ? "text-amber-600" : "text-gray-400"}`}>
-                    ৳{formatMoney(due)}
+                    ৳{due.toLocaleString()}
                   </span>
                 </div>
                 <div className="flex justify-between border-t border-gray-200 pt-1.5 mt-1">
                   <span className="text-gray-600 font-semibold">এই Sale এ Profit/Loss</span>
                   <span className={`font-bold ${profitLoss >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                    {profitLoss >= 0 ? "+" : ""}৳{formatMoney(profitLoss)}
+                    {profitLoss >= 0 ? "+" : ""}৳{profitLoss.toLocaleString()}
                   </span>
                 </div>
               </div>
@@ -557,7 +563,6 @@ const SalePage = () => {
         </div>
       )}
 
-      {/* Quick Add Customer Modal */}
       {addCustomerOpen && (
         <div
           className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4"
@@ -599,7 +604,6 @@ const SalePage = () => {
         </div>
       )}
 
-      {/* Delete confirm */}
       {deleteTarget && (
         <div
           className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"

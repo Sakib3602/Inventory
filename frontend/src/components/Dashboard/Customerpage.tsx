@@ -45,6 +45,38 @@ interface Sale {
   dueAmount: number;
 }
 
+const safeNumber = (value: number | string | null | undefined): number => {
+  const parsed = typeof value === "number" ? value : Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const formatMoney = (value: number | string | null | undefined) => safeNumber(value).toLocaleString();
+
+const normalizeCustomer = (customer: Partial<Customer> | null | undefined): Customer => ({
+  _id: customer?._id || "",
+  name: customer?.name || "",
+  phone: customer?.phone || "",
+  address: customer?.address || "",
+  totalBilled: safeNumber(customer?.totalBilled),
+  totalPaid: safeNumber(customer?.totalPaid),
+  totalDue: safeNumber(customer?.totalDue),
+  createdAt: customer?.createdAt || "",
+});
+
+const normalizeSale = (sale: Partial<Sale> | null | undefined): Sale => ({
+  _id: sale?._id || "",
+  date: sale?.date || "",
+  items: (sale?.items || []).map((item) => ({
+    productName: item?.productName || "",
+    quantityKg: safeNumber(item?.quantityKg),
+    ratePerKg: safeNumber(item?.ratePerKg),
+    amount: safeNumber(item?.amount),
+  })),
+  totalAmount: safeNumber(sale?.totalAmount),
+  paidAmount: safeNumber(sale?.paidAmount),
+  dueAmount: safeNumber(sale?.dueAmount),
+});
+
 const CustomerPage = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [funds, setFunds] = useState<Fund[]>([]);
@@ -78,7 +110,7 @@ const CustomerPage = () => {
     setLoading(true);
     try {
       const res = await axiosInstance.get("/customers", { params: { search: searchTerm } });
-      setCustomers(res.data);
+      setCustomers((Array.isArray(res.data) ? res.data : []).map(normalizeCustomer));
     } catch (err) {
       showToast("⚠️ " + getErrorMessage(err, "Data লোড করতে সমস্যা হয়েছে"));
     } finally {
@@ -96,6 +128,7 @@ const CustomerPage = () => {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchCustomers();
     fetchFunds();
   }, [fetchCustomers, fetchFunds]);
@@ -130,12 +163,12 @@ const CustomerPage = () => {
   };
 
   const openHistory = async (customer: Customer) => {
-    setSelectedCustomer(customer);
+    setSelectedCustomer(normalizeCustomer(customer));
     setSales([]);
     setHistoryLoading(true);
     try {
       const res = await axiosInstance.get(`/customers/${customer._id}/sales`);
-      setSales(res.data);
+      setSales((Array.isArray(res.data) ? res.data : []).map(normalizeSale));
     } catch {
       setSales([]);
     } finally {
@@ -171,7 +204,7 @@ const CustomerPage = () => {
       });
       showToast("✅ বাকি আদায় হয়েছে");
       setPaymentModalOpen(false);
-      setSelectedCustomer(res.data);
+      setSelectedCustomer(normalizeCustomer(res.data));
       fetchCustomers(search);
     } catch (err) {
       showToast("⚠️ " + getErrorMessage(err, "আদায় করা যায়নি"));
@@ -201,15 +234,15 @@ const CustomerPage = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
         <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <p className="text-2xl font-bold text-red-500">৳{totalDueAll.toLocaleString()}</p>
+          <p className="text-2xl font-bold text-red-500">৳{formatMoney(totalDueAll)}</p>
           <p className="text-xs text-gray-400 mt-1">সব Customer মিলিয়ে মোট বাকি</p>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <p className="text-2xl font-bold text-[#1f2b22]">৳{totalBilledAll.toLocaleString()}</p>
+          <p className="text-2xl font-bold text-[#1f2b22]">৳{formatMoney(totalBilledAll)}</p>
           <p className="text-xs text-gray-400 mt-1">মোট বিক্রি (এখন পর্যন্ত)</p>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <p className="text-2xl font-bold text-emerald-700">৳{totalPaidAll.toLocaleString()}</p>
+          <p className="text-2xl font-bold text-emerald-700">৳{formatMoney(totalPaidAll)}</p>
           <p className="text-xs text-gray-400 mt-1">মোট আদায় হয়েছে</p>
         </div>
       </div>
@@ -242,16 +275,16 @@ const CustomerPage = () => {
               <div className="mt-3">
                 <p className="text-xs text-gray-400">বর্তমান বাকি</p>
                 <p className={`text-2xl font-bold ${c.totalDue > 0 ? "text-red-500" : "text-emerald-600"}`}>
-                  ৳{c.totalDue.toLocaleString()}
+                  ৳{formatMoney(c.totalDue)}
                 </p>
               </div>
 
               <div className="flex justify-between text-xs text-gray-500 pt-3 mt-3 border-t border-gray-100">
                 <span>
-                  বিক্রি: <span className="font-semibold text-[#1f2b22]">৳{c.totalBilled.toLocaleString()}</span>
+                  বিক্রি: <span className="font-semibold text-[#1f2b22]">৳{formatMoney(c.totalBilled)}</span>
                 </span>
                 <span>
-                  আদায়: <span className="font-semibold text-[#1f2b22]">৳{c.totalPaid.toLocaleString()}</span>
+                  আদায়: <span className="font-semibold text-[#1f2b22]">৳{formatMoney(c.totalPaid)}</span>
                 </span>
               </div>
             </div>
@@ -339,7 +372,7 @@ const CustomerPage = () => {
                       selectedCustomer.totalDue > 0 ? "text-red-500" : "text-emerald-600"
                     }`}
                   >
-                    ৳{selectedCustomer.totalDue.toLocaleString()}
+                    ৳{formatMoney(selectedCustomer.totalDue)}
                   </span>
                 </p>
               </div>
@@ -368,14 +401,14 @@ const CustomerPage = () => {
                   <div key={s._id} className="border border-gray-200 rounded-lg p-3 text-sm">
                     <div className="flex justify-between items-start mb-1">
                       <span className="text-xs text-gray-400">{s.date}</span>
-                      <span className="font-bold text-[#1f2b22]">৳{s.totalAmount.toLocaleString()}</span>
+                      <span className="font-bold text-[#1f2b22]">৳{formatMoney(s.totalAmount)}</span>
                     </div>
                     <p className="text-xs text-gray-500">
                       {s.items.map((it) => `${it.productName} (${it.quantityKg}kg)`).join(", ")}
                     </p>
                     <div className="flex justify-between text-xs mt-1">
-                      <span className="text-emerald-600">Paid: ৳{s.paidAmount.toLocaleString()}</span>
-                      {s.dueAmount > 0 && <span className="text-red-500">Due: ৳{s.dueAmount.toLocaleString()}</span>}
+                      <span className="text-emerald-600">Paid: ৳{formatMoney(s.paidAmount)}</span>
+                      {s.dueAmount > 0 && <span className="text-red-500">Due: ৳{formatMoney(s.dueAmount)}</span>}
                     </div>
                   </div>
                 ))}
@@ -394,7 +427,7 @@ const CustomerPage = () => {
           <div className="bg-white rounded-2xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-semibold text-[#1f2b22] mb-1">বাকি আদায় করো</h2>
             <p className="text-xs text-gray-400 mb-4">
-              {selectedCustomer.name} — বর্তমান বাকি ৳{selectedCustomer.totalDue.toLocaleString()}
+              {selectedCustomer.name} — বর্তমান বাকি ৳{formatMoney(selectedCustomer.totalDue)}
             </p>
             <div className="flex flex-col gap-3">
               <div>
