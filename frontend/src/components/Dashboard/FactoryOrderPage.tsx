@@ -1,17 +1,5 @@
-import axios from "axios";
 import { useEffect, useState, useCallback } from "react";
 import axiosInstance from "../../URI/axiosInstance";
-
-interface ApiErrorResponse {
-  message?: string;
-}
-
-const getErrorMessage = (error: unknown, fallback: string) => {
-  if (axios.isAxiosError<ApiErrorResponse>(error)) {
-    return error.response?.data?.message || fallback;
-  }
-  return fallback;
-};
 
 interface Fund {
   _id: string;
@@ -23,103 +11,143 @@ interface FactoryOrder {
   _id: string;
   company: string;
   date: string;
+
   bagCount: number;
   weightPerBag: number;
   expectedTotalKg: number;
+
   returnedBags: number;
   status: "pending" | "partial" | "completed";
+
+  bagPrice: number;
+  totalBagPrice: number;
+  bagPaidAmount: number;
+  bagDue: number;
+
   advanceAmount: number;
   advanceFundName: string | null;
   createdAt: string;
 }
 
-const toNumber = (value: unknown) => {
-  const numberValue = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(numberValue) ? numberValue : 0;
-};
-
-const normalizeOrder = (order: Record<string, unknown>): FactoryOrder => {
-  const bagCount = toNumber(order.bagCount);
-  const weightPerBag = toNumber(order.weightPerBag);
-
-  return {
-    ...(order as unknown as FactoryOrder),
-    bagCount,
-    weightPerBag,
-    expectedTotalKg: toNumber(order.expectedTotalKg) || bagCount * weightPerBag,
-    returnedBags: toNumber(order.returnedBags),
-    advanceAmount: toNumber(order.advanceAmount),
-  };
-};
-
 const FactoryOrderPage = () => {
   const [orders, setOrders] = useState<FactoryOrder[]>([]);
   const [funds, setFunds] = useState<Fund[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
 
+  // Pagination & Searching
+  const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
+  // Modals
   const [modalOpen, setModalOpen] = useState(false);
+  const [payBagModalOpen, setPayBagModalOpen] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState<FactoryOrder | null>(null);
+
+  // Form states
   const [company, setCompany] = useState("");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date] = useState(() => new Date().toISOString().slice(0, 10));
   const [bagCount, setBagCount] = useState("");
   const [weightPerBag, setWeightPerBag] = useState("");
+
+  const [bagPrice, setBagPrice] = useState("");
+  const [bagPaidAmount, setBagPaidAmount] = useState("");
+
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [fundId, setFundId] = useState("");
-  const [saving, setSaving] = useState(false);
 
-  const [deleteTarget, setDeleteTarget] = useState<FactoryOrder | null>(null);
+  const [saving, setSaving] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
+
+  // -----------------------------------------
+  // Helpers
+  // -----------------------------------------
+
+  const safeNumber = (value: unknown): number => {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  const formatMoney = (value: unknown): string => {
+    return safeNumber(value).toLocaleString();
+  };
+
+  // -----------------------------------------
+  // Toast
+  // -----------------------------------------
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
-    setTimeout(() => setToastMsg(""), 2500);
+    setTimeout(() => {
+      setToastMsg("");
+    }, 2500);
   };
+
+  // -----------------------------------------
+  // Fetch Orders + Funds
+  // -----------------------------------------
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    setLoadError("");
     try {
       const [ordersRes, fundsRes] = await Promise.all([
         axiosInstance.get("/factory-orders"),
         axiosInstance.get("/funds"),
       ]);
-      const rawOrders = ordersRes.data as Record<string, unknown>[];
-      setOrders(rawOrders.map(normalizeOrder));
-      setFunds(fundsRes.data);
-    } catch (err: unknown) {
-      setLoadError(getErrorMessage(err, "Data লোড করতে সমস্যা হয়েছে"));
-      showToast("⚠️ Data লোড করতে সমস্যা হয়েছে");
+
+      const normalizedOrders: FactoryOrder[] = (ordersRes.data || []).map((order: any) => ({
+        ...order,
+        bagCount: safeNumber(order.bagCount),
+        weightPerBag: safeNumber(order.weightPerBag),
+        expectedTotalKg: safeNumber(order.expectedTotalKg),
+        returnedBags: safeNumber(order.returnedBags),
+        bagPrice: safeNumber(order.bagPrice),
+        totalBagPrice: safeNumber(order.totalBagPrice),
+        bagPaidAmount: safeNumber(order.bagPaidAmount),
+        bagDue: safeNumber(order.bagDue),
+        advanceAmount: safeNumber(order.advanceAmount),
+        advanceFundName: order.advanceFundName ?? null,
+      }));
+
+      const normalizedFunds: Fund[] = (fundsRes.data || []).map((fund: any) => ({
+        ...fund,
+        balance: safeNumber(fund.balance),
+      }));
+
+      setOrders(normalizedOrders);
+      setFunds(normalizedFunds);
+    } catch (err) {
+      console.error("Factory Order fetch error:", err);
+      showToast("⚠️ Failed to load data");
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void fetchAll();
-    }, 0);
-
-    return () => window.clearTimeout(timer);
+    fetchAll();
   }, [fetchAll]);
 
-  const openAddModal = () => {
-    setCompany("");
-    setDate(new Date().toISOString().slice(0, 10));
-    setBagCount("");
-    setWeightPerBag("");
-    setAdvanceAmount("");
-    setFundId(funds[0]?._id || "");
-    setModalOpen(true);
-  };
+  // -----------------------------------------
+  // Derived Values
+  // -----------------------------------------
 
-  const expectedTotalKg = (Number(bagCount) || 0) * (Number(weightPerBag) || 0);
+  const totalBagPriceCalculated = (Number(bagCount) || 0) * (Number(bagPrice) || 0);
+  const bagDueCalculated = totalBagPriceCalculated - (Number(bagPaidAmount) || 0);
+
   const advanceNum = Number(advanceAmount) || 0;
-  const selectedFund = funds.find((f) => f._id === fundId);
+  const bagPaidNum = Number(bagPaidAmount) || 0;
+  const totalDeduct = advanceNum + bagPaidNum;
+
+  // -----------------------------------------
+  // Save Factory Order
+  // -----------------------------------------
 
   const handleSave = async () => {
-    if (!company.trim()) return showToast("⚠️ Company Name দাও");
-    if (!bagCount || !weightPerBag) return showToast("⚠️ বসতা সংখ্যা ও kg/বসতা দাও");
-    if (advanceNum > 0 && !fundId) return showToast("⚠️ Advance দিলে Fund বেছে নাও");
+    if (!company.trim()) return showToast("⚠️ Company Name is required");
+    if (!bagCount || !weightPerBag) return showToast("⚠️ Bag count and weight are required");
+    if (totalDeduct > 0 && !fundId) return showToast("⚠️ Select a fund for payment");
+    if (Number(bagPaidAmount) > totalBagPriceCalculated) return showToast("⚠️ Payment cannot exceed total bag cost");
 
     setSaving(true);
     try {
@@ -128,338 +156,415 @@ const FactoryOrderPage = () => {
         date,
         bagCount,
         weightPerBag,
+        bagPrice,
+        bagPaidAmount,
         advanceAmount: advanceNum || undefined,
-        fundId: advanceNum > 0 ? fundId : undefined,
+        fundId: totalDeduct > 0 ? fundId : undefined,
       });
-      showToast("✅ Order Save হয়েছে");
+
+      showToast("✅ Order saved successfully");
+
+      setCompany("");
+      setBagCount("");
+      setWeightPerBag("");
+      setBagPrice("");
+      setBagPaidAmount("");
+      setAdvanceAmount("");
+      setFundId("");
       setModalOpen(false);
-      fetchAll();
-    } catch (err: unknown) {
-      showToast("⚠️ " + getErrorMessage(err, "কিছু একটা সমস্যা হয়েছে"));
+
+      await fetchAll();
+    } catch (err: any) {
+      console.error("Factory Order save error:", err);
+      showToast("⚠️ " + (err.response?.data?.message || "Something went wrong"));
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
+  // -----------------------------------------
+  // Pay Bag Due
+  // -----------------------------------------
+
+  const handlePayBagDue = async () => {
+    const payAmt = Number(bagPaidAmount);
+    if (!selectedOrder) return;
+    const currentDue = safeNumber(selectedOrder.bagDue);
+
+    if (payAmt <= 0 || payAmt > currentDue) return showToast("⚠️ Enter a valid amount");
+    if (!fundId) return showToast("⚠️ Select a fund");
+
+    setSaving(true);
     try {
-      await axiosInstance.delete(`/factory-orders/${deleteTarget._id}`);
-      showToast("✅ Order Delete হয়েছে");
-      setDeleteTarget(null);
-      fetchAll();
-    } catch (err: unknown) {
-      showToast("⚠️ " + getErrorMessage(err, "Delete করা যায়নি"));
+      await axiosInstance.post(`/factory-orders/${selectedOrder._id}/pay-bag`, {
+        amount: payAmt,
+        fundId,
+      });
+
+      showToast("✅ Bag due paid successfully");
+      setPayBagModalOpen(false);
+      setSelectedOrder(null);
+      setBagPaidAmount("");
+      setFundId("");
+
+      await fetchAll();
+    } catch (err: any) {
+      console.error("Pay bag due error:", err);
+      showToast("⚠️ " + (err.response?.data?.message || "Payment failed"));
+    } finally {
+      setSaving(false);
     }
   };
 
-  const statusBadge = (status: string) => {
-    if (status === "completed")
-      return (
-        <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700">
-          Completed
-        </span>
-      );
-    if (status === "partial")
-      return (
-        <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-50 text-amber-700">
-          Partial
-        </span>
-      );
-    return (
-      <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-red-50 text-red-600">Pending</span>
-    );
-  };
+  // -----------------------------------------
+  // Search & Pagination
+  // -----------------------------------------
 
-  const totalOrders = orders.length;
-  const pendingOrdersCount = orders.filter((o) => o.status !== "completed").length;
-  const totalPendingBags = orders.reduce((s, o) => s + Math.max(0, o.bagCount - o.returnedBags), 0);
+  const filteredOrders = orders.filter((o) =>
+    String(o.company || "").toLowerCase().includes(search.toLowerCase())
+  );
+
+  const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
+  const paginatedOrders = filteredOrders.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  // -----------------------------------------
+  // Render
+  // -----------------------------------------
 
   return (
-    <div>
+    <div className="text-gray-800">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
-          <h1 className="text-xl font-semibold text-[#1f2b22]">Factory Order (বসতা পাঠানো)</h1>
-          <p className="text-sm text-gray-400 mt-0.5">
-            শুধু পরিকল্পনা — বসতা সংখ্যা + kg/বসতা দাও, চাইলে Advance দাও, বাকি টাকা Return এ হিসাব হবে
+          <h1 className="text-2xl font-bold text-[#1f2b22]">Factory Orders</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Track bag costs and factory advances. Product costs are managed in Returns.
           </p>
         </div>
+
         <button
-          onClick={openAddModal}
-          className="bg-[#1f2b22] hover:bg-[#28392f] text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
+          onClick={() => {
+            setCompany("");
+            setBagCount("");
+            setWeightPerBag("");
+            setBagPrice("");
+            setBagPaidAmount("");
+            setAdvanceAmount("");
+            setFundId("");
+            setModalOpen(true);
+          }}
+          className="bg-[#1f2b22] hover:bg-black text-white text-sm font-semibold px-5 py-2.5 rounded-sm transition-colors"
         >
-          + নতুন Order
+          + New Order
         </button>
       </div>
 
-      {loadError && (
-        <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg p-3 mb-4">
-          {loadError}
-        </div>
-      )}
-
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <p className="text-2xl font-bold text-[#1f2b22]">{totalOrders}</p>
-          <p className="text-xs text-gray-400 mt-1">Total Order</p>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <p className="text-2xl font-bold text-amber-600">{pendingOrdersCount}</p>
-          <p className="text-xs text-gray-400 mt-1">Pending / Partial Order</p>
-        </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <p className="text-2xl font-bold text-red-500">{totalPendingBags}</p>
-          <p className="text-xs text-gray-400 mt-1">মোট Pending বসতা</p>
-        </div>
+      {/* Search */}
+      <div className="mb-4">
+        <input
+          type="text"
+          placeholder="Search by company name..."
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setCurrentPage(1);
+          }}
+          className="w-full md:w-1/3 border border-gray-300 rounded-sm px-4 py-2 text-sm focus:outline-none focus:border-[#1f2b22]"
+        />
       </div>
 
+      {/* Table */}
       {loading ? (
-        <div className="text-center py-16 text-gray-400 text-sm">লোড হচ্ছে...</div>
-      ) : orders.length === 0 ? (
-        <div className="text-center py-16 text-gray-400 text-sm bg-white border border-gray-200 rounded-xl">
-          কোনো Order নেই
-        </div>
+        <div className="text-center py-16 text-gray-400 text-sm">Loading...</div>
       ) : (
-        <>
-          {/* Desktop table */}
-          <div className="hidden md:block bg-white border border-gray-200 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
+        <div className="bg-white border border-gray-300 rounded-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
               <thead>
-                <tr className="bg-gray-50 border-b border-gray-200 text-left text-gray-500 text-xs uppercase">
-                  <th className="px-4 py-3">Company</th>
-                  <th className="px-4 py-3">Date</th>
-                  <th className="px-4 py-3">বসতা</th>
-                  <th className="px-4 py-3">kg/বসতা</th>
-                  <th className="px-4 py-3">সম্ভাব্য kg</th>
-                  <th className="px-4 py-3">Advance</th>
-                  <th className="px-4 py-3">Pending বসতা</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3"></th>
+                <tr className="bg-gray-100 border-b border-gray-300 text-gray-700 text-xs uppercase tracking-wide">
+                  <th className="px-4 py-3 font-semibold">Company</th>
+                  <th className="px-4 py-3 font-semibold">Date</th>
+                  <th className="px-4 py-3 font-semibold">Total Bags</th>
+                  <th className="px-4 py-3 font-semibold">Bag Cost</th>
+                  <th className="px-4 py-3 font-semibold">Bag Due</th>
+                  <th className="px-4 py-3 font-semibold">Pending Bags</th>
+                  <th className="px-4 py-3 font-semibold text-right">Action</th>
                 </tr>
               </thead>
+
               <tbody>
-                {orders.map((o) => {
-                  const pendingBags = Math.max(0, o.bagCount - o.returnedBags);
-                  return (
-                    <tr key={o._id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50/60">
-                      <td className="px-4 py-3 font-medium text-[#1f2b22]">{o.company}</td>
-                      <td className="px-4 py-3 text-gray-600">{o.date}</td>
-                      <td className="px-4 py-3 text-gray-600">{o.bagCount}</td>
-                      <td className="px-4 py-3 text-gray-600">{o.weightPerBag} kg</td>
-                      <td className="px-4 py-3 text-gray-600">{o.expectedTotalKg.toLocaleString()} kg</td>
-                      <td className="px-4 py-3 text-gray-600">
-                        {o.advanceAmount > 0 ? (
-                          <span>
-                            ৳{o.advanceAmount.toLocaleString()}
-                            {o.advanceFundName ? (
-                              <span className="text-gray-400"> ({o.advanceFundName})</span>
-                            ) : null}
-                          </span>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {pendingBags > 0 ? (
-                          <span className="font-semibold text-red-500">{pendingBags} বাকি</span>
-                        ) : (
-                          <span className="font-semibold text-emerald-600">০ বাকি</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">{statusBadge(o.status)}</td>
-                      <td className="px-4 py-3 text-right">
-                        {o.returnedBags === 0 && (
-                          <button
-                            onClick={() => setDeleteTarget(o)}
-                            className="text-xs text-red-500 hover:underline"
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {paginatedOrders.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="text-center py-10 text-gray-500">
+                      No factory orders found.
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedOrders.map((o) => {
+                    const bagCount = safeNumber(o.bagCount);
+                    const returnedBags = safeNumber(o.returnedBags);
+                    const totalBagPrice = safeNumber(o.totalBagPrice);
+                    const bagDue = safeNumber(o.bagDue);
+                    const pendingBags = Math.max(0, bagCount - returnedBags);
+
+                    return (
+                      <tr key={o._id} className="border-b border-gray-200 last:border-0 hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 font-medium text-[#1f2b22]">{o.company || "-"}</td>
+                        <td className="px-4 py-3 text-gray-600">{o.date || "-"}</td>
+                        <td className="px-4 py-3 text-gray-600">{bagCount}</td>
+                        <td className="px-4 py-3 text-gray-600">৳{formatMoney(totalBagPrice)}</td>
+                        <td className="px-4 py-3 text-red-600 font-medium">
+                          {bagDue > 0 ? `৳${formatMoney(bagDue)}` : "0"}
+                        </td>
+                        <td className="px-4 py-3 font-medium text-amber-600">
+                          {pendingBags}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {bagDue > 0 && (
+                            <button
+                              onClick={() => {
+                                setSelectedOrder(o);
+                                setBagPaidAmount("");
+                                setFundId("");
+                                setPayBagModalOpen(true);
+                              }}
+                              className="text-xs bg-white border border-gray-300 text-gray-800 hover:bg-gray-100 px-3 py-1.5 rounded-sm font-medium transition-colors"
+                            >
+                              Pay Due
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
 
-          {/* Mobile cards */}
-          <div className="md:hidden flex flex-col gap-3">
-            {orders.map((o) => {
-              const pendingBags = Math.max(0, o.bagCount - o.returnedBags);
-              return (
-                <div key={o._id} className="bg-white border border-gray-200 rounded-xl p-4">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-semibold text-[#1f2b22]">{o.company}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{o.date}</p>
-                    </div>
-                    {statusBadge(o.status)}
-                  </div>
-                  <div className="text-xs text-gray-500 mt-2 flex flex-wrap gap-x-4 gap-y-1">
-                    <span>
-                      {o.bagCount} বসতা × {o.weightPerBag}kg = {o.expectedTotalKg.toLocaleString()}kg
-                    </span>
-                    <span className={pendingBags > 0 ? "text-red-500 font-semibold" : "text-emerald-600 font-semibold"}>
-                      Pending: {pendingBags}
-                    </span>
-                    {o.advanceAmount > 0 && <span>Advance: ৳{o.advanceAmount.toLocaleString()}</span>}
-                  </div>
-                  {o.returnedBags === 0 && (
-                    <div className="flex gap-4 mt-3 pt-3 border-t border-gray-100">
-                      <button onClick={() => setDeleteTarget(o)} className="text-xs font-semibold text-red-500">
-                        Delete
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </>
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex justify-between items-center px-4 py-3 bg-gray-50 border-t border-gray-300">
+              <button
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((p) => p - 1)}
+                className="text-xs bg-white border border-gray-300 px-3 py-1.5 rounded-sm disabled:opacity-50 hover:bg-gray-100 transition-colors"
+              >
+                Previous
+              </button>
+              <span className="text-xs text-gray-600 font-medium">
+                Page {currentPage} of {totalPages}
+              </span>
+              <button
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage((p) => p + 1)}
+                className="text-xs bg-white border border-gray-300 px-3 py-1.5 rounded-sm disabled:opacity-50 hover:bg-gray-100 transition-colors"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
-      {/* Add Modal */}
+      {/* =========================================
+          ADD FACTORY ORDER MODAL
+      ========================================= */}
       {modalOpen && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={() => setModalOpen(false)}
-        >
-          <div className="bg-white rounded-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-semibold text-[#1f2b22] mb-4">নতুন Factory Order</h2>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-sm w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto shadow-lg">
+            <div className="flex justify-between items-center mb-5 border-b border-gray-200 pb-3">
+              <h2 className="text-xl font-bold text-[#1f2b22]">New Factory Order</h2>
+              <button onClick={() => setModalOpen(false)} className="text-gray-500 hover:text-black text-xl font-bold">&times;</button>
+            </div>
 
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-4">
+              {/* Company */}
               <div>
-                <label className="text-xs font-semibold text-gray-500 block mb-1">Company Name *</label>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Company Name <span className="text-red-500">*</span></label>
                 <input
+                  type="text"
                   value={company}
                   onChange={(e) => setCompany(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  placeholder="Perfect Agro Feeds"
+                  className="w-full border border-gray-300 rounded-sm px-3 py-2 text-sm focus:outline-none focus:border-[#1f2b22]"
                 />
               </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-500 block mb-1">Date *</label>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
+
+              {/* Bags + Weight */}
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs font-semibold text-gray-500 block mb-1">বসতা সংখ্যা *</label>
+                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Total Bags <span className="text-red-500">*</span></label>
                   <input
                     type="number"
+                    min="0"
                     value={bagCount}
                     onChange={(e) => setBagCount(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                    placeholder="100"
+                    className="w-full border border-gray-300 rounded-sm px-3 py-2 text-sm focus:outline-none focus:border-[#1f2b22]"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-gray-500 block mb-1">kg / বসতা *</label>
+                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Weight Per Bag (kg) <span className="text-red-500">*</span></label>
                   <input
                     type="number"
+                    min="0"
                     value={weightPerBag}
                     onChange={(e) => setWeightPerBag(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                    placeholder="30"
+                    className="w-full border border-gray-300 rounded-sm px-3 py-2 text-sm focus:outline-none focus:border-[#1f2b22]"
                   />
                 </div>
               </div>
 
-              {expectedTotalKg > 0 && (
-                <div className="bg-[#f6f5f1] rounded-lg p-3 text-sm">
-                  সম্ভাব্য মোট kg:{" "}
-                  <span className="font-bold text-[#1f2b22]">{expectedTotalKg.toLocaleString()} kg</span>
+              <hr className="border-gray-200" />
+
+              {/* Bag Cost & Payment */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Price Per Bag (৳)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={bagPrice}
+                    onChange={(e) => setBagPrice(e.target.value)}
+                    className="w-full border border-gray-300 rounded-sm px-3 py-2 text-sm focus:outline-none focus:border-[#1f2b22]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Paid For Bags (৳)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={bagPaidAmount}
+                    onChange={(e) => setBagPaidAmount(e.target.value)}
+                    className="w-full border border-gray-300 rounded-sm px-3 py-2 text-sm focus:outline-none focus:border-[#1f2b22]"
+                  />
+                </div>
+              </div>
+
+              {/* Calculated Price Summary */}
+              {totalBagPriceCalculated > 0 && (
+                <div className="bg-gray-50 border border-gray-200 p-3 rounded-sm text-sm">
+                  <span className="text-gray-600">Total Bag Cost: </span>
+                  <span className="font-semibold">৳{formatMoney(totalBagPriceCalculated)}</span>
+                  <span className="mx-2 text-gray-300">|</span>
+                  <span className="text-gray-600">Due: </span>
+                  <span className="font-semibold text-red-600">৳{formatMoney(Math.max(0, bagDueCalculated))}</span>
                 </div>
               )}
 
-              <div className="border-t border-gray-100 pt-3 mt-1">
-                <label className="text-xs font-semibold text-gray-500 block mb-1">
-                  Advance Amount (ঐচ্ছিক)
-                </label>
+              {/* Advance Product Payment */}
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Product Advance (৳) <span className="text-gray-400 font-normal lowercase">- Optional</span></label>
                 <input
                   type="number"
+                  min="0"
                   value={advanceAmount}
                   onChange={(e) => setAdvanceAmount(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                  placeholder="এখন কিছু টাকা দিতে চাইলে লিখো"
+                  className="w-full border border-gray-300 rounded-sm px-3 py-2 text-sm focus:outline-none focus:border-[#1f2b22]"
                 />
               </div>
 
-              {advanceNum > 0 && (
+              {/* Fund Selection (only shows if money is being spent) */}
+              {totalDeduct > 0 && (
                 <div>
-                  <label className="text-xs font-semibold text-gray-500 block mb-1">Fund Source *</label>
+                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Select Payment Source</label>
                   <select
                     value={fundId}
                     onChange={(e) => setFundId(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                    className="w-full border border-gray-300 rounded-sm px-3 py-2 text-sm focus:outline-none focus:border-[#1f2b22] bg-white"
                   >
-                    <option value="">Fund বেছে নাও</option>
+                    <option value="">Choose Fund (৳{formatMoney(totalDeduct)} will be deducted)</option>
                     {funds.map((f) => (
                       <option key={f._id} value={f._id}>
-                        {f.name} (Balance: ৳{f.balance.toLocaleString()})
+                        {f.name} (Bal: ৳{formatMoney(f.balance)})
                       </option>
                     ))}
                   </select>
-                  {selectedFund && advanceNum > selectedFund.balance && (
-                    <p className="text-xs text-red-500 mt-1">⚠️ যথেষ্ট টাকা নেই</p>
-                  )}
                 </div>
               )}
             </div>
 
-            <div className="flex gap-3 mt-6">
+            {/* Buttons */}
+            <div className="flex gap-3 mt-8">
               <button
                 onClick={() => setModalOpen(false)}
-                className="flex-1 border border-gray-200 text-gray-600 rounded-lg py-2.5 text-sm font-semibold"
+                className="flex-1 bg-white border border-gray-300 text-gray-800 py-2.5 text-sm font-semibold rounded-sm hover:bg-gray-50 transition-colors"
               >
-                বাতিল
+                Cancel
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex-1 bg-[#1f2b22] hover:bg-[#28392f] text-white rounded-lg py-2.5 text-sm font-semibold disabled:opacity-50"
+                className="flex-1 bg-[#1f2b22] hover:bg-black text-white py-2.5 text-sm font-semibold rounded-sm disabled:opacity-50 transition-colors"
               >
-                {saving ? "Saving..." : "Order Save করো"}
+                {saving ? "Saving..." : "Save Order"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete confirm */}
-      {deleteTarget && (
-        <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-          onClick={() => setDeleteTarget(null)}
-        >
-          <div className="bg-white rounded-2xl w-full max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
-            <p className="text-sm text-gray-600 mb-1">তুমি কি নিশ্চিত?</p>
-            <p className="font-semibold text-[#1f2b22] mb-2">"{deleteTarget.company}" Order Delete হয়ে যাবে</p>
-            {deleteTarget.advanceAmount > 0 && (
-              <p className="text-xs text-gray-400 mb-3">
-                Advance দেওয়া ৳{deleteTarget.advanceAmount.toLocaleString()} Fund এ ফেরত যাবে
-              </p>
-            )}
-            <div className="flex gap-3 mt-2">
+      {/* =========================================
+          PAY BAG DUE MODAL
+      ========================================= */}
+      {payBagModalOpen && selectedOrder && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-sm w-full max-w-sm p-6 shadow-lg">
+            <div className="flex justify-between items-center mb-4 border-b border-gray-200 pb-2">
+              <h2 className="text-lg font-bold text-[#1f2b22]">Pay Bag Due</h2>
+              <button onClick={() => { setPayBagModalOpen(false); setSelectedOrder(null); }} className="text-gray-500 hover:text-black text-xl font-bold">&times;</button>
+            </div>
+
+            <div className="bg-gray-50 border border-gray-200 p-3 rounded-sm mb-4">
+              <p className="text-sm text-gray-700"><span className="font-semibold">Company:</span> {selectedOrder.company}</p>
+              <p className="text-sm text-red-600 mt-1"><span className="font-semibold text-gray-700">Due Amount:</span> ৳{formatMoney(selectedOrder.bagDue)}</p>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Payment Amount (৳)</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={bagPaidAmount}
+                  onChange={(e) => setBagPaidAmount(e.target.value)}
+                  className="w-full border border-gray-300 rounded-sm px-3 py-2 text-sm focus:outline-none focus:border-[#1f2b22]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Payment Source</label>
+                <select
+                  value={fundId}
+                  onChange={(e) => setFundId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-sm px-3 py-2 text-sm focus:outline-none focus:border-[#1f2b22] bg-white"
+                >
+                  <option value="">Select Fund</option>
+                  {funds.map((f) => (
+                    <option key={f._id} value={f._id}>
+                      {f.name} (Bal: ৳{formatMoney(f.balance)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Buttons */}
+            <div className="flex gap-3 mt-6">
               <button
-                onClick={() => setDeleteTarget(null)}
-                className="flex-1 border border-gray-200 text-gray-600 rounded-lg py-2.5 text-sm font-semibold"
+                onClick={() => {
+                  setPayBagModalOpen(false);
+                  setSelectedOrder(null);
+                }}
+                className="flex-1 bg-white border border-gray-300 text-gray-800 py-2 text-sm font-semibold rounded-sm hover:bg-gray-50 transition-colors"
               >
-                বাতিল
+                Cancel
               </button>
               <button
-                onClick={handleDelete}
-                className="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-lg py-2.5 text-sm font-semibold"
+                onClick={handlePayBagDue}
+                disabled={saving}
+                className="flex-1 bg-[#1f2b22] hover:bg-black text-white py-2 text-sm font-semibold rounded-sm disabled:opacity-50 transition-colors"
               >
-                Delete করো
+                {saving ? "Processing..." : "Submit"}
               </button>
             </div>
           </div>
@@ -468,7 +573,7 @@ const FactoryOrderPage = () => {
 
       {/* Toast */}
       {toastMsg && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#1f2b22] text-white text-sm px-5 py-2.5 rounded-full shadow-lg z-50">
+        <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-[#1f2b22] text-white text-sm px-5 py-3 rounded-sm shadow-md z-50">
           {toastMsg}
         </div>
       )}

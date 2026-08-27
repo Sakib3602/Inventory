@@ -12,6 +12,7 @@ import CompanyLedgerPage from "../components/Dashboard/Companyledgerpage";
 import CustomerPage from "../components/Dashboard/Customerpage";
 import SalePage from "../components/Dashboard/Salepage";
 import StockPage from "../components/Dashboard/Stockpage";
+import Dashboard from "../components/Dashboard/Dashboard";
 
 const RoutesAll = () => {
   return (
@@ -41,9 +42,10 @@ const RoutesAll = () => {
           </PrivateRoute>
         }
       >
-        <Route path="product" element={<ProductMaster />} />
+        <Route index element={<Dashboard />} />
         <Route path="factory-order" element={<FactoryOrderPage />} />
         <Route path="factory-return" element={<FactoryReturnPage />} />
+        <Route path="product" element={<ProductMaster />} />
         <Route path="company-ledger" element={<CompanyLedgerPage />} />
         <Route path="fund" element={<FundPage />} />
         <Route path="customers" element={<CustomerPage />} />
