@@ -13,6 +13,7 @@ import CustomerPage from "../components/Dashboard/Customerpage";
 import SalePage from "../components/Dashboard/Salepage";
 import StockPage from "../components/Dashboard/Stockpage";
 import Dashboard from "../components/Dashboard/Dashboard";
+import ExpensePage from "../components/Dashboard/ExpensePage";
 
 const RoutesAll = () => {
   return (
@@ -49,6 +50,7 @@ const RoutesAll = () => {
         <Route path="company-ledger" element={<CompanyLedgerPage />} />
         <Route path="fund" element={<FundPage />} />
         <Route path="customers" element={<CustomerPage />} />
+        <Route path="expense" element={<ExpensePage />} />
 
         <Route path="sale" element={<SalePage />} />
         <Route path="stock" element={<StockPage />} />

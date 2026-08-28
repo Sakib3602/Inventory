@@ -20,7 +20,7 @@ const DashboardNavbar = ({ onMenuClick }: DashboardNavbarProps) => {
           Welcome back <span className="text-gray-400 font-normal">👋</span>
         </h2>
         <p className="text-xs md:text-sm text-gray-400 mt-0.5">
-          আপনার ব্যবসার সব হিসাব এক জায়গায়
+          Your dashboard at a glance
         </p>
       </div>
     </header>

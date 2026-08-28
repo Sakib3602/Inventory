@@ -5,12 +5,13 @@ import {
   LayoutDashboard,
   Package,
   Truck,
-  Undo2,
+  RotateCcw,
+  BookOpen,
   Boxes,
-  ShoppingCart,
-  BookText,
+  ShoppingBag,
+  Users,
+  Receipt,
   Wallet,
-  TrendingUp,
   LogOut,
   ChevronsLeft,
   ChevronsRight,
@@ -21,14 +22,12 @@ const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
   { icon: Package, label: "Product / Feed Master", path: "/dashboard/product" },
   { icon: Truck, label: "Factory Order", path: "/dashboard/factory-order" },
-  { icon: Undo2, label: "Factory Return", path: "/dashboard/factory-return" },
-  { icon: Undo2, label: "Company Ledger", path: "/dashboard/company-ledger" },
+  { icon: RotateCcw, label: "Factory Return", path: "/dashboard/factory-return" },
+  { icon: BookOpen, label: "Company Ledger", path: "/dashboard/company-ledger" },
   { icon: Boxes, label: "Stock", path: "/dashboard/stock" },
-  { icon: ShoppingCart, label: "Sale / Stock Out", path: "/dashboard/sale" },
-  { icon: ShoppingCart, label: "Customer", path: "/dashboard/customers" },
-  { icon: BookText, label: "Dokan Ledger", path: "/dashboard/ledger" },
-  { icon: Wallet, label: "Expense", path: "/dashboard/expense" },
-  { icon: TrendingUp, label: "Profit & Loss", path: "/dashboard/profit-loss" },
+  { icon: ShoppingBag, label: "Sale / Stock Out", path: "/dashboard/sale" },
+  { icon: Users, label: "Customer", path: "/dashboard/customers" },
+  { icon: Receipt, label: "Expense", path: "/dashboard/expense" },
   { icon: Wallet, label: "Fund", path: "/dashboard/fund" },
 ];
 
@@ -40,7 +39,7 @@ interface SidebarProps {
 const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
   const { logout, user } = useAuth();
   const navigate = useNavigate();
-  const [collapsed, setCollapsed] = useState(false); // desktop icon-only mode
+  const [collapsed, setCollapsed] = useState(false); 
 
   const handleLogout = async () => {
     await logout();
@@ -58,10 +57,7 @@ const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
       )}
 
       <aside
-        className={`poppins-regular fixed md:static inset-y-0 left-0 z-40 min-h-screen bg-[#1f2b22] text-gray-300 shrink-0 flex flex-col
-          transition-all duration-300 ease-in-out
-          ${isOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0
-          ${collapsed ? "md:w-20" : "md:w-64"} w-64`}
+        className={`poppins-regular fixed md:sticky top-0 left-0 z-40 h-screen bg-[#1f2b22] text-gray-300 shrink-0 flex flex-col transition-all duration-300 ease-in-out ${isOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0 ${collapsed ? "md:w-20" : "md:w-64"} w-64`}
       >
         {/* Brand */}
         <div className="px-5 pt-6 pb-4 border-b border-white/10 mb-2 flex items-center justify-between">
@@ -70,7 +66,7 @@ const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
               Feed Inventory System
             </h1>
             <p className="text-xs text-gray-400 mt-1 whitespace-nowrap">
-              Working Demo — MERN
+              Abir Feed Mill
             </p>
           </div>
 
@@ -109,7 +105,7 @@ const Sidebar = ({ isOpen, onClose }: SidebarProps) => {
                     collapsed ? "md:justify-center md:px-0" : ""
                   } ${
                     isActive
-                      ? "bg-white/10 border-yellow-600 text-white font-semibold"
+                      ? "bg-white/10 border-emerald-500 text-white font-semibold"
                       : "border-transparent text-gray-300 hover:bg-white/5 hover:text-white"
                   }`
                 }
