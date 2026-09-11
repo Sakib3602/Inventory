@@ -19,7 +19,7 @@ const RoutesAll = () => {
   return (
     <Routes>
       <Route
-        path="/login"
+        path="/"
         element={
           <PublicRoute>
             <Login />

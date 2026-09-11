@@ -79,12 +79,12 @@ function Login() {
         </button>
       </form>
 
-      <p className="text-center text-sm text-gray-500 mt-8">
+      {/* <p className="text-center text-sm text-gray-500 mt-8">
         Account নেই?{" "}
         <Link to="/register" className="font-semibold text-gray-800 hover:underline">
           Register করুন
         </Link>
-      </p>
+      </p> */}
     </AuthLayout>
   );
 }
