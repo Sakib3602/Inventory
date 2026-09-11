@@ -37,7 +37,7 @@ const FactoryOrderPage = () => {
   const [newBagSupplierName, setNewBagSupplierName] = useState("");
   const [bagSupplierPhone, setBagSupplierPhone] = useState("");
   
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date] = useState(() => new Date().toISOString().slice(0, 10));
   const [bagName, setBagName] = useState("");
   const [bagCount, setBagCount] = useState("");
   const [weightPerBag, setWeightPerBag] = useState("");

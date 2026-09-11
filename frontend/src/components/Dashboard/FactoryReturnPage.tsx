@@ -92,7 +92,6 @@ const FactoryReturnPage = () => {
   }, [dispatches, returns, allOrders]);
 
   const selectedBatch = pendingBatches.find(b => b.key === selectedBatchKey);
-  const selectedOrderId = selectedBatch?.orderId || "";
   const pendingBagsAtFactory = selectedBatch ? (selectedBatch.totalSent - selectedBatch.totalReturned) : 0;
 
   const updateItem = (index: number, field: keyof ReturnItemInput, value: string) => {
@@ -110,7 +109,7 @@ const FactoryReturnPage = () => {
 
   const totalBagsUsed = items.reduce((s, it) => s + (Number(it.bagCount) || 0), 0);
   const totalBillAmount = items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
-  const remainingToPay = totalBillAmount; 
+
 
   const handleSave = async () => {
     if (!selectedBatch) return showToast("⚠️ Select a pending batch");
