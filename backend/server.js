@@ -16,7 +16,7 @@ const client = new MongoClient(uri);
 
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://check340.netlify.app","https://hellotesting111.netlify.com"],
+    origin: ["http://localhost:5173", "https://check340.netlify.app", "https://hellotsting111.netlify.app"],
     credentials: true,
   })
 );
